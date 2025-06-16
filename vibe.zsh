@@ -7,6 +7,98 @@ vibe() {
     LOCAL_WORKTREE_BASE="/Volumes/External/Repositories/_vibecoding"
     REMOTE_WORKTREE_BASE="/Volumes/My Shared Files/_vibecoding"
 
+    # Helper function to validate git repository
+    _validate_git_repo() {
+        if ! git rev-parse --git-dir > /dev/null 2>&1; then
+            echo "Error: Not in a git repository"
+            return 1
+        fi
+    }
+
+    # Helper function to get repository information
+    _get_repo_info() {
+        REPO_ROOT=$(git rev-parse --show-toplevel)
+        REPO_NAME=$(basename "$REPO_ROOT")
+    }
+
+    # Helper function to check if worktree exists
+    _check_worktree_exists() {
+        local worktree_name="$1"
+        if [ -d "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name" ]; then
+            echo "Worktree directory already exists at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"
+            echo "Checking if it's already a valid worktree..."
+            
+            # Check if it's already a git worktree
+            if git worktree list | grep -q "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"; then
+                echo "Directory is already a valid worktree"
+                return 0
+            else
+                echo "Error: Directory exists but is not a git worktree"
+                echo "Please remove the directory or choose a different name"
+                return 1
+            fi
+        fi
+        return 2  # Directory doesn't exist
+    }
+
+    # Helper function to create worktree
+    _create_worktree() {
+        local worktree_name="$1"
+        echo "Creating worktree '$worktree_name'..."
+        
+        # Ensure repository subdirectory exists
+        mkdir -p "$LOCAL_WORKTREE_BASE/$REPO_NAME"
+        
+        # Check if this is a remote branch reference (e.g., origin/branch-name)
+        if [[ "$worktree_name" == origin/* ]]; then
+            # Extract the branch name without origin/ prefix
+            LOCAL_BRANCH_NAME="${worktree_name#origin/}"
+            
+            # Check if the remote branch exists
+            if git show-ref --verify --quiet refs/remotes/"$worktree_name"; then
+                echo "Found remote branch '$worktree_name', creating local tracking branch '$LOCAL_BRANCH_NAME'..."
+                if ! git worktree add -b "$LOCAL_BRANCH_NAME" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$LOCAL_BRANCH_NAME" "$worktree_name"; then
+                    echo "Error: Failed to create worktree from remote branch"
+                    return 1
+                fi
+                # Update WORKTREE_NAME to use the local branch name for the rest of the function
+                WORKTREE_NAME="$LOCAL_BRANCH_NAME"
+            else
+                echo "Error: Remote branch '$worktree_name' does not exist"
+                echo "Available remote branches:"
+                git branch -r | grep "origin/"
+                return 1
+            fi
+        # Check if local branch already exists
+        elif git show-ref --verify --quiet refs/heads/"$worktree_name"; then
+            # Branch exists, create worktree from existing branch
+            if ! git worktree add "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name" "$worktree_name"; then
+                echo "Error: Failed to create worktree"
+                return 1
+            fi
+        else
+            # Branch doesn't exist, create new branch and worktree
+            if ! git worktree add -b "$worktree_name" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"; then
+                echo "Error: Failed to create worktree"
+                return 1
+            fi
+        fi
+        
+        echo "Worktree created successfully at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"
+    }
+
+    # Helper function to connect to remote
+    _connect_to_remote() {
+        local use_cly="$1"
+        if [ "$use_cly" = "true" ]; then
+            echo "Connecting to vibecoding.local and starting cly..."
+            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i -c \"cly\""
+        else
+            echo "Connecting to vibecoding.local and navigating to worktree..."
+            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i"
+        fi
+    }
+
     # Check for --cli option
     if [ "$1" = "--cli" ]; then
         if [ $# -eq 1 ]; then
@@ -14,16 +106,32 @@ vibe() {
             echo "Connecting to vibecoding.local..."
             ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local
             return 0
-        elif [ $# -eq 3 ]; then
-            # Repository and worktree specified, SSH and cd to worktree
-            REPO_NAME="$2"
-            WORKTREE_NAME="$3"
-            echo "Connecting to vibecoding.local and navigating to worktree..."
-            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i"
+        elif [ $# -eq 2 ]; then
+            # Worktree specified, need to be in git repo and follow same logic as main command
+            WORKTREE_NAME="$2"
+            
+            # Validate git repository
+            _validate_git_repo || return 1
+
+            # Get repository information
+            _get_repo_info
+            
+            # Check if worktree exists
+            _check_worktree_exists "$WORKTREE_NAME"
+            local exists_status=$?
+            if [ $exists_status -eq 1 ]; then
+                return 1
+            elif [ $exists_status -eq 2 ]; then
+                # Create the worktree
+                _create_worktree "$WORKTREE_NAME" || return 1
+            fi
+            
+            # Connect to remote
+            _connect_to_remote false
             return 0
         else
             echo "Error: Invalid arguments for --cli option"
-            echo "Usage: vibe --cli [repo_name worktree_name]"
+            echo "Usage: vibe --cli [worktree_name]"
             return 1
         fi
     fi
@@ -32,83 +140,30 @@ vibe() {
     if [ $# -ne 1 ]; then
         echo "Error: Please provide exactly one argument (worktree name)"
         echo "Usage: vibe <worktree_name>"
-        echo "   or: vibe --cli [repo_name worktree_name]"
+        echo "   or: vibe --cli [worktree_name]"
         return 1
     fi
 
     WORKTREE_NAME="$1"
 
-    # Check if we're in a git repository (not needed for --cli option)
-    if ! git rev-parse --git-dir > /dev/null 2>&1; then
-        echo "Error: Not in a git repository"
+    # Validate git repository
+    _validate_git_repo || return 1
+
+    # Get repository information
+    _get_repo_info
+
+    # Check if worktree exists
+    _check_worktree_exists "$WORKTREE_NAME"
+    local exists_status=$?
+    if [ $exists_status -eq 1 ]; then
         return 1
-    fi
-
-    # Get repository name for subdirectory organization
-    REPO_ROOT=$(git rev-parse --show-toplevel)
-    REPO_NAME=$(basename "$REPO_ROOT")
-
-    # Check if worktree directory already exists
-    if [ -d "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME" ]; then
-        echo "Worktree directory already exists at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"
-        echo "Checking if it's already a valid worktree..."
-        
-        # Check if it's already a git worktree
-        if git worktree list | grep -q "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"; then
-            echo "Directory is already a valid worktree"
-        else
-            echo "Error: Directory exists but is not a git worktree"
-            echo "Please remove the directory or choose a different name"
-            return 1
-        fi
-    else
+    elif [ $exists_status -eq 2 ]; then
         # Create the worktree
-        echo "Creating worktree '$WORKTREE_NAME'..."
-        
-        # Ensure repository subdirectory exists
-        mkdir -p "$LOCAL_WORKTREE_BASE/$REPO_NAME"
-        
-        # Check if this is a remote branch reference (e.g., origin/branch-name)
-        if [[ "$WORKTREE_NAME" == origin/* ]]; then
-            # Extract the branch name without origin/ prefix
-            LOCAL_BRANCH_NAME="${WORKTREE_NAME#origin/}"
-            
-            # Check if the remote branch exists
-            if git show-ref --verify --quiet refs/remotes/"$WORKTREE_NAME"; then
-                echo "Found remote branch '$WORKTREE_NAME', creating local tracking branch '$LOCAL_BRANCH_NAME'..."
-                if ! git worktree add -b "$LOCAL_BRANCH_NAME" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$LOCAL_BRANCH_NAME" "$WORKTREE_NAME"; then
-                    echo "Error: Failed to create worktree from remote branch"
-                    return 1
-                fi
-                # Update WORKTREE_NAME to use the local branch name for the rest of the function
-                WORKTREE_NAME="$LOCAL_BRANCH_NAME"
-            else
-                echo "Error: Remote branch '$WORKTREE_NAME' does not exist"
-                echo "Available remote branches:"
-                git branch -r | grep "origin/"
-                return 1
-            fi
-        # Check if local branch already exists
-        elif git show-ref --verify --quiet refs/heads/"$WORKTREE_NAME"; then
-            # Branch exists, create worktree from existing branch
-            if ! git worktree add "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME" "$WORKTREE_NAME"; then
-                echo "Error: Failed to create worktree"
-                return 1
-            fi
-        else
-            # Branch doesn't exist, create new branch and worktree
-            if ! git worktree add -b "$WORKTREE_NAME" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"; then
-                echo "Error: Failed to create worktree"
-                return 1
-            fi
-        fi
-        
-        echo "Worktree created successfully at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"
+        _create_worktree "$WORKTREE_NAME" || return 1
     fi
 
-    # SSH to remote machine and start vibe coding session
-    echo "Connecting to vibecoding.local and starting cly..."
-    ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i -c \"cly\""
+    # Connect to remote with cly
+    _connect_to_remote true
 }
 
 # Completion function for vibe command

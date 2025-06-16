@@ -109,7 +109,7 @@ vibe() {
         
         # Verify the repository root exists
         if [ ! -d "$repo_root" ]; then
-            echo "    ❌ Error: Repository root does not exist"
+            echo "    Error: Repository root does not exist"
             return 1
         fi
         
@@ -117,14 +117,14 @@ vibe() {
         if (cd "$repo_root" && git worktree remove "$worktree_path" 2>/dev/null); then
             return 0
         else
-            echo "    ❌ Failed to remove"
+            echo "    Failed to remove"
             return 1
         fi
     }
 
     # Helper function to clean all worktrees across all repositories
     _clean_all_worktrees() {
-        echo "🧹 Cleaning worktrees in: $LOCAL_WORKTREE_BASE"
+        echo "Cleaning worktrees in: $LOCAL_WORKTREE_BASE"
         echo ""
         
         if [ ! -d "$LOCAL_WORKTREE_BASE" ]; then
@@ -178,19 +178,19 @@ vibe() {
                         
                         # Print repo header only when we find the first worktree
                         if [ "$repo_has_worktrees" = false ]; then
-                            echo "📁 $repo_name"
+                            echo "[$repo_name]"
                             repo_has_worktrees=true
                         fi
                         
                         if _has_uncommitted_changes "$worktree_path"; then
-                            echo "  ⏭️  $worktree_name (uncommitted changes)"
+                            echo "  - $worktree_name (uncommitted changes)"
                             ((skipped_count++))
                         else
                             if _remove_worktree "$worktree_path" "$original_repo"; then
-                                echo "  ✅ $worktree_name"
+                                echo "  + $worktree_name"
                                 ((cleaned_count++))
                             else
-                                echo "  ❌ $worktree_name (failed)"
+                                echo "  x $worktree_name (failed)"
                             fi
                         fi
                     fi
@@ -199,7 +199,7 @@ vibe() {
         done
         
         echo ""
-        echo "🏁 Removed: $cleaned_count, Skipped: $skipped_count"
+        echo "Removed: $cleaned_count, Skipped: $skipped_count"
     }
 
     # Helper function to clean a specific worktree
@@ -207,35 +207,33 @@ vibe() {
         local worktree_name="$1"
         local worktree_path="$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"
         
-        echo "🧹 Cleaning worktree: $worktree_name"
+        echo "Cleaning worktree: $worktree_name"
         echo ""
         
         # Check if worktree exists
         if [ ! -d "$worktree_path" ]; then
-            echo "❌ Worktree '$worktree_name' does not exist"
+            echo "Error: Worktree '$worktree_name' does not exist"
             return 1
         fi
         
         # Check if it's a valid worktree
         if ! git worktree list | grep -q "$worktree_path"; then
-            echo "❌ '$worktree_name' is not a valid git worktree"
+            echo "Error: '$worktree_name' is not a valid git worktree"
             return 1
         fi
         
         # Check for uncommitted changes
         if _has_uncommitted_changes "$worktree_path"; then
-            echo "⏭️  Cannot clean '$worktree_name' (uncommitted changes)"
-            echo "   Please commit or stash changes first"
+            echo "Cannot clean '$worktree_name' (uncommitted changes)"
+            echo "Please commit or stash changes first"
             return 1
         fi
         
         # Remove the worktree
         if _remove_worktree "$worktree_path" "$REPO_ROOT"; then
-            echo "✅ $worktree_name"
-            echo ""
-            echo "🏁 Cleanup complete"
+            echo "Removed: $worktree_name"
         else
-            echo "❌ Failed to remove '$worktree_name'"
+            echo "Failed to remove '$worktree_name'"
             return 1
         fi
     }

@@ -1,5 +1,4 @@
 #!/bin/zsh
-
 # Git worktree manager for remote development sessions
 # Creates and manages git worktrees, then connects to remote machine for coding
 
@@ -8,16 +7,37 @@ vibe() {
     LOCAL_WORKTREE_BASE="/Volumes/External/Repositories/_vibecoding"
     REMOTE_WORKTREE_BASE="/Volumes/My Shared Files/_vibecoding"
 
+    # Check for --cli option
+    if [ "$1" = "--cli" ]; then
+        if [ $# -eq 1 ]; then
+            # No worktree specified, just SSH to home
+            echo "Connecting to vibecoding.local..."
+            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local
+            return 0
+        elif [ $# -eq 2 ]; then
+            # Worktree specified, SSH and cd to worktree
+            WORKTREE_NAME="$2"
+            echo "Connecting to vibecoding.local and navigating to worktree..."
+            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$WORKTREE_NAME' && zsh -l -i"
+            return 0
+        else
+            echo "Error: Too many arguments for --cli option"
+            echo "Usage: vibe --cli [worktree_name]"
+            return 1
+        fi
+    fi
+
     # Check if exactly one argument is provided
     if [ $# -ne 1 ]; then
         echo "Error: Please provide exactly one argument (worktree name)"
         echo "Usage: vibe <worktree_name>"
+        echo "   or: vibe --cli [worktree_name]"
         return 1
     fi
 
     WORKTREE_NAME="$1"
 
-    # Check if we're in a git repository
+    # Check if we're in a git repository (not needed for --cli option)
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
         echo "Error: Not in a git repository"
         return 1

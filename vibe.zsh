@@ -14,15 +14,16 @@ vibe() {
             echo "Connecting to vibecoding.local..."
             ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local
             return 0
-        elif [ $# -eq 2 ]; then
-            # Worktree specified, SSH and cd to worktree
-            WORKTREE_NAME="$2"
+        elif [ $# -eq 3 ]; then
+            # Repository and worktree specified, SSH and cd to worktree
+            REPO_NAME="$2"
+            WORKTREE_NAME="$3"
             echo "Connecting to vibecoding.local and navigating to worktree..."
-            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$WORKTREE_NAME' && zsh -l -i"
+            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i"
             return 0
         else
-            echo "Error: Too many arguments for --cli option"
-            echo "Usage: vibe --cli [worktree_name]"
+            echo "Error: Invalid arguments for --cli option"
+            echo "Usage: vibe --cli [repo_name worktree_name]"
             return 1
         fi
     fi
@@ -31,7 +32,7 @@ vibe() {
     if [ $# -ne 1 ]; then
         echo "Error: Please provide exactly one argument (worktree name)"
         echo "Usage: vibe <worktree_name>"
-        echo "   or: vibe --cli [worktree_name]"
+        echo "   or: vibe --cli [repo_name worktree_name]"
         return 1
     fi
 
@@ -43,13 +44,17 @@ vibe() {
         return 1
     fi
 
+    # Get repository name for subdirectory organization
+    REPO_ROOT=$(git rev-parse --show-toplevel)
+    REPO_NAME=$(basename "$REPO_ROOT")
+
     # Check if worktree directory already exists
-    if [ -d "$LOCAL_WORKTREE_BASE/$WORKTREE_NAME" ]; then
-        echo "Worktree directory already exists at: $LOCAL_WORKTREE_BASE/$WORKTREE_NAME"
+    if [ -d "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME" ]; then
+        echo "Worktree directory already exists at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"
         echo "Checking if it's already a valid worktree..."
         
         # Check if it's already a git worktree
-        if git worktree list | grep -q "$LOCAL_WORKTREE_BASE/$WORKTREE_NAME"; then
+        if git worktree list | grep -q "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"; then
             echo "Directory is already a valid worktree"
         else
             echo "Error: Directory exists but is not a git worktree"
@@ -60,6 +65,9 @@ vibe() {
         # Create the worktree
         echo "Creating worktree '$WORKTREE_NAME'..."
         
+        # Ensure repository subdirectory exists
+        mkdir -p "$LOCAL_WORKTREE_BASE/$REPO_NAME"
+        
         # Check if this is a remote branch reference (e.g., origin/branch-name)
         if [[ "$WORKTREE_NAME" == origin/* ]]; then
             # Extract the branch name without origin/ prefix
@@ -68,7 +76,7 @@ vibe() {
             # Check if the remote branch exists
             if git show-ref --verify --quiet refs/remotes/"$WORKTREE_NAME"; then
                 echo "Found remote branch '$WORKTREE_NAME', creating local tracking branch '$LOCAL_BRANCH_NAME'..."
-                if ! git worktree add -b "$LOCAL_BRANCH_NAME" "$LOCAL_WORKTREE_BASE/$LOCAL_BRANCH_NAME" "$WORKTREE_NAME"; then
+                if ! git worktree add -b "$LOCAL_BRANCH_NAME" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$LOCAL_BRANCH_NAME" "$WORKTREE_NAME"; then
                     echo "Error: Failed to create worktree from remote branch"
                     return 1
                 fi
@@ -83,24 +91,24 @@ vibe() {
         # Check if local branch already exists
         elif git show-ref --verify --quiet refs/heads/"$WORKTREE_NAME"; then
             # Branch exists, create worktree from existing branch
-            if ! git worktree add "$LOCAL_WORKTREE_BASE/$WORKTREE_NAME" "$WORKTREE_NAME"; then
+            if ! git worktree add "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME" "$WORKTREE_NAME"; then
                 echo "Error: Failed to create worktree"
                 return 1
             fi
         else
             # Branch doesn't exist, create new branch and worktree
-            if ! git worktree add -b "$WORKTREE_NAME" "$LOCAL_WORKTREE_BASE/$WORKTREE_NAME"; then
+            if ! git worktree add -b "$WORKTREE_NAME" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"; then
                 echo "Error: Failed to create worktree"
                 return 1
             fi
         fi
         
-        echo "Worktree created successfully at: $LOCAL_WORKTREE_BASE/$WORKTREE_NAME"
+        echo "Worktree created successfully at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"
     fi
 
     # SSH to remote machine and start vibe coding session
     echo "Connecting to vibecoding.local and starting cly..."
-    ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$WORKTREE_NAME' && zsh -l -i -c \"cly\""
+    ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i -c \"cly\""
 }
 
 # Completion function for vibe command

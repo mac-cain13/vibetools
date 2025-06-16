@@ -6,6 +6,9 @@ vibe() {
     # Global constants
     LOCAL_WORKTREE_BASE="/Volumes/External/Repositories/_vibecoding"
     REMOTE_WORKTREE_BASE="/Volumes/My Shared Files/_vibecoding"
+    SSH_KEY_PATH="~/.ssh/id_vibecoding"
+    SSH_USER_HOST="nonstrict@vibecoding.local"
+    CODING_TOOL_CMD="cly"
 
     # Helper function to validate git repository
     _validate_git_repo() {
@@ -91,11 +94,11 @@ vibe() {
     _connect_to_remote() {
         local use_cly="$1"
         if [ "$use_cly" = "true" ]; then
-            echo "Connecting to vibecoding.local and starting cly..."
-            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i -c \"cly\""
+            echo "Connecting to vibecoding.local and starting $CODING_TOOL_CMD..."
+            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i -c \"$CODING_TOOL_CMD\""
         else
             echo "Connecting to vibecoding.local and navigating to worktree..."
-            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i"
+            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i"
         fi
     }
 
@@ -104,7 +107,7 @@ vibe() {
         if [ $# -eq 1 ]; then
             # No worktree specified, just SSH to home
             echo "Connecting to vibecoding.local..."
-            ssh -i ~/.ssh/id_vibecoding nonstrict@vibecoding.local
+            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST"
             return 0
         elif [ $# -eq 2 ]; then
             # Worktree specified, need to be in git repo and follow same logic as main command

@@ -250,6 +250,21 @@ vibe() {
         fi
     }
 
+    # Helper function to connect locally
+    _connect_locally() {
+        local original_dir="$PWD"
+        local worktree_path="$LOCAL_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME"
+        
+        echo "Switching to local worktree and starting $CODING_TOOL_CMD..."
+        
+        # Run in subshell so directory change doesn't affect parent
+        (cd "$worktree_path" && "$CODING_TOOL_CMD")
+        local exit_code=$?
+        
+        echo "Returning to original directory..."
+        return $exit_code
+    }
+
     # Check for --clean option
     if [ "$1" = "--clean" ]; then
         if [ $# -eq 1 ]; then
@@ -313,11 +328,44 @@ vibe() {
         fi
     fi
 
+    # Check for --local option
+    if [ "$1" = "--local" ]; then
+        if [ $# -eq 2 ]; then
+            # Worktree specified, need to be in git repo and follow same logic as main command
+            WORKTREE_NAME="$2"
+            
+            # Validate git repository
+            _validate_git_repo || return 1
+
+            # Get repository information
+            _get_repo_info
+            
+            # Check if worktree exists
+            _check_worktree_exists "$WORKTREE_NAME"
+            local exists_status=$?
+            if [ $exists_status -eq 1 ]; then
+                return 1
+            elif [ $exists_status -eq 2 ]; then
+                # Create the worktree
+                _create_worktree "$WORKTREE_NAME" || return 1
+            fi
+            
+            # Connect locally
+            _connect_locally
+            return $?
+        else
+            echo "Error: Invalid arguments for --local option"
+            echo "Usage: vibe --local <worktree_name>"
+            return 1
+        fi
+    fi
+
     # Check if exactly one argument is provided
     if [ $# -ne 1 ]; then
         echo "Error: Please provide exactly one argument (worktree name)"
-        echo "Usage: vibe <worktree_name>"
+        echo "Usage: vibe [worktree_name]"
         echo "   or: vibe --cli [worktree_name]"
+        echo "   or: vibe --local [worktree_name]"
         echo "   or: vibe --clean [worktree_name]"
         return 1
     fi
@@ -352,6 +400,7 @@ _vibe() {
     # Define the main options
     options=(
         '--cli:Connect to remote CLI'
+        '--local:Work locally without SSH'
         '--clean:Clean worktrees without uncommitted changes'
     )
     
@@ -397,8 +446,8 @@ _vibe() {
                     fi
                 fi
                 ;;
-            --cli)
-                # For --cli, show branch names like the main command
+            --cli|--local)
+                # For --cli and --local, show branch names like the main command
                 if git rev-parse --git-dir > /dev/null 2>&1; then
                     local branches
                     local local_branches remote_branches

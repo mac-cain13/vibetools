@@ -5,7 +5,7 @@
 vibe() {
     # Global constants
     LOCAL_WORKTREE_BASE="/Volumes/External/Repositories/_vibecoding"
-    REMOTE_WORKTREE_BASE="/Volumes/My Shared Files/_vibecoding"
+    REMOTE_WORKTREE_BASE="/Volumes/_vibecoding"
     SSH_KEY_PATH="~/.ssh/id_vibecoding"
     SSH_USER_HOST="admin@vibecoding.local"
     CODING_TOOL_CMD="cly"

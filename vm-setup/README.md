@@ -24,8 +24,9 @@ _Pristine VM ready._
 ### Change macOS Settings
 
 - Enable automatic login in setting for admin
-- Enable SSH & Screen Sharing
-- Set local hostname to `virtualmachine.local`
+- Sharing: Enable SSH & Screen Sharing
+NEW: - General > About: Set local hostname to `Virtual Machine`
+- Sharing: Set local hostname to `virtualmachine.local`
 - Turn Firewall on
 - Lock screen; Turn off display: Never / Require password after screen saver: Never
 - Energy; Prevent automatic sleep: Yes / Put hard disks to sleep: No
@@ -48,6 +49,9 @@ _Pristine VM ready._
 - Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes`
 
+NEW: (Not yet in my VM templates)
+- Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc`
+
 _Base VM ready._
 
 ### Install Claude Code
@@ -66,7 +70,8 @@ _Base vibe VM ready._
 
 - Clone VM: `tart clone tahoe-base-vibe tahoe-vibecoding-template`
 
-- Change hostname to `vibecoding`
+NEW: - General > About: Set local hostname to `Vibecoding VM`
+- Sharing: Change hostname to `vibecoding`
 - Login into Xcodes & install latest Xcode: 
   - `xcodes install --latest --experimental-unxip`
   - `xcodes install --latest-prerelease --experimental-unxip`
@@ -74,11 +79,13 @@ _Base vibe VM ready._
   - The install runtimes: `xcodes runtimes "iOS 26.0"`
 - Drag Xcode into the dock
 - Go through wizard & login to claude code: `claude`
+- Mount the network share `_vibecoding` store credentials in keychain
+- Add the share to Settings > General > Login items > + Select the shared folder
 
 ## Using the VM
 
 - Clone VM: `tart clone tahoe-vibecoding-template vibecoding`
-- Run VM: `tart run vibecoding --no-graphics --suspendable --dir=_vibecoding:/Volumes/External/Repositories/_vibecoding`
+- Run VM: `tart run vibecoding --no-graphics --suspendable`
 - SSH into the VM: `ssh -i ~/.ssh/id_vibecoding admin@$(tart ip vibecoding)`
 
-_Tip: You can also use the Apple Screen Sharing app to 
+_Tip: You can also use the Apple Screen Sharing app to get to the VM._

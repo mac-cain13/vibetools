@@ -1,5 +1,6 @@
 #!/usr/bin/env zsh
 # Simple, elegant terminal title management for Claude
+# From https://steipete.me/posts/2025/commanding-your-claude-code-army
 
 # Set terminal title
 _set_title() { 

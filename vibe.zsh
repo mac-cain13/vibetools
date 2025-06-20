@@ -102,6 +102,23 @@ vibe() {
         fi
     }
 
+    # Helper function to check if directory is empty (ignoring .DS_Store)
+    _is_directory_empty() {
+        local dir="$1"
+        
+        # Check if directory exists
+        if [ ! -d "$dir" ]; then
+            return 1
+        fi
+        
+        # Count files, excluding .DS_Store
+        local file_count=$(find "$dir" -maxdepth 1 -type f ! -name ".DS_Store" | wc -l)
+        local dir_count=$(find "$dir" -maxdepth 1 -type d ! -path "$dir" | wc -l)
+        
+        # Directory is empty if no files (except .DS_Store) and no subdirectories
+        [ $file_count -eq 0 ] && [ $dir_count -eq 0 ]
+    }
+
     # Helper function to remove a worktree
     _remove_worktree() {
         local worktree_path="$1"
@@ -109,15 +126,24 @@ vibe() {
         
         # Verify the repository root exists
         if [ ! -d "$repo_root" ]; then
-            echo "    Error: Repository root does not exist"
             return 1
         fi
         
         # Change to the repository root and remove the worktree
         if (cd "$repo_root" && git worktree remove "$worktree_path" 2>/dev/null); then
+            # After successfully removing the worktree, check if parent directory is empty
+            local parent_dir=$(dirname "$worktree_path")
+            if _is_directory_empty "$parent_dir"; then
+                # Remove any .DS_Store file if present
+                rm -f "$parent_dir/.DS_Store" 2>/dev/null
+                # Remove the empty directory
+                if rmdir "$parent_dir" 2>/dev/null; then
+                    # Return 2 to indicate parent directory was also removed
+                    return 2
+                fi
+            fi
             return 0
         else
-            echo "    Failed to remove"
             return 1
         fi
     }
@@ -183,14 +209,19 @@ vibe() {
                         fi
                         
                         if _has_uncommitted_changes "$worktree_path"; then
-                            echo "  - $worktree_name (uncommitted changes)"
+                            echo "  [ SKIP  ] $worktree_name - has uncommitted changes"
                             ((skipped_count++))
                         else
-                            if _remove_worktree "$worktree_path" "$original_repo"; then
-                                echo "  + $worktree_name"
+                            _remove_worktree "$worktree_path" "$original_repo"
+                            local remove_status=$?
+                            if [ $remove_status -eq 0 ]; then
+                                echo "  [CLEANED] $worktree_name"
+                                ((cleaned_count++))
+                            elif [ $remove_status -eq 2 ]; then
+                                echo "  [CLEANED] $worktree_name + removed empty parent directory"
                                 ((cleaned_count++))
                             else
-                                echo "  x $worktree_name (failed)"
+                                echo "  [ FAIL  ] $worktree_name - could not remove"
                             fi
                         fi
                     fi
@@ -230,10 +261,14 @@ vibe() {
         fi
         
         # Remove the worktree
-        if _remove_worktree "$worktree_path" "$REPO_ROOT"; then
-            echo "Removed: $worktree_name"
+        _remove_worktree "$worktree_path" "$REPO_ROOT"
+        local remove_status=$?
+        if [ $remove_status -eq 0 ]; then
+            echo "[CLEANED] Removed: $worktree_name"
+        elif [ $remove_status -eq 2 ]; then
+            echo "[CLEANED] Removed: $worktree_name (also cleaned empty parent directory)"
         else
-            echo "Failed to remove '$worktree_name'"
+            echo "[ FAIL  ] Could not remove '$worktree_name'"
             return 1
         fi
     }

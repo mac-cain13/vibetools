@@ -50,7 +50,7 @@ NEW: - General > About: Set local hostname to `Virtual Machine`
 - Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes`
 
 NEW: (Not yet in my VM templates)
-- Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc`
+- Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify`
 
 _Base VM ready._
 
@@ -82,6 +82,8 @@ NEW: - General > About: Set local hostname to `Vibecoding VM`
 - Mount the network share `_vibecoding` store credentials in keychain
 - Add the share to Settings > General > Login items > + Select the shared folder
 
+NEW: - Add `claude.md` to `~/.claude/claude.md`
+
 ## Using the VM
 
 - Clone VM: `tart clone tahoe-vibecoding-template vibecoding`
@@ -89,3 +91,7 @@ NEW: - General > About: Set local hostname to `Vibecoding VM`
 - SSH into the VM: `ssh -i ~/.ssh/id_vibecoding admin@$(tart ip vibecoding)`
 
 _Tip: You can also use the Apple Screen Sharing app to get to the VM._
+
+### Adding MCP servers
+
+NEW: - `claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking`

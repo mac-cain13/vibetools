@@ -331,7 +331,7 @@ vibe() {
         if [ $# -eq 1 ]; then
             # No worktree specified, just SSH to home
             echo "Connecting to vibecoding.local..."
-            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST"
+            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "export TMPDIR=\$(mktemp -d) && zsh -l -i"
             return 0
         elif [ $# -eq 2 ]; then
             # Worktree specified, need to be in git repo and follow same logic as main command

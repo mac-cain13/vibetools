@@ -50,7 +50,7 @@ NEW: - General > About: Set local hostname to `Virtual Machine`
 - Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes`
 
 NEW: (Not yet in my VM templates)
-- Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify`
+- Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
 
 _Base VM ready._
 
@@ -78,11 +78,16 @@ NEW: - General > About: Set local hostname to `Vibecoding VM`
   - `xcodes select`
   - The install runtimes: `xcodes runtimes "iOS 26.0"`
 - Drag Xcode into the dock
+- Login to Xcode with `vibecoding@nonstrict.com`
 - Go through wizard & login to claude code: `claude`
 - Mount the network share `_vibecoding` store credentials in keychain
 - Add the share to Settings > General > Login items > + Select the shared folder
-
 NEW: - Add `claude.md` to `~/.claude/claude.md`
+
+- Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.
+- Run UITests once over SSH, this will trigger a permission prompt for XCTests to allow it to run.
+
+_Note:_ For Xcode to be able to build over SSH you need to unlock the keychain before building: `security -v unlock-keychain -p admin ~/Library/Keychains/login.keychain-db`
 
 ## Using the VM
 

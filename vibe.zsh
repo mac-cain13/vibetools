@@ -278,10 +278,10 @@ vibe() {
         local use_cly="$1"
         if [ "$use_cly" = "true" ]; then
             echo "Connecting to vibecoding.local and starting $CODING_TOOL_CMD..."
-            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i -c \"$CODING_TOOL_CMD\""
+            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && security -v unlock-keychain -p admin ~/Library/Keychains/login.keychain-db && zsh -l -i -c \"$CODING_TOOL_CMD\""
         else
             echo "Connecting to vibecoding.local and navigating to worktree..."
-            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && zsh -l -i"
+            ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "cd '$REMOTE_WORKTREE_BASE/$REPO_NAME/$WORKTREE_NAME' && security -v unlock-keychain -p admin ~/Library/Keychains/login.keychain-db && zsh -l -i"
         fi
     }
 

@@ -51,6 +51,9 @@ NEW: - General > About: Set local hostname to `Virtual Machine`
 
 NEW: (Not yet in my VM templates)
 - Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
+- Add PermissionAutoResponder.app to Applications, then;
+  - add it as a login item: Settings > General > Login items > + Select the app
+  - Give accessibility permissions!
 
 _Base VM ready._
 
@@ -72,6 +75,7 @@ _Base vibe VM ready._
 
 NEW: - General > About: Set local hostname to `Vibecoding VM`
 - Sharing: Change hostname to `vibecoding`
+NEW: - Login to gh with `gh auth login` use the personal access token from 1Password (has reduces permissions)
 - Login into Xcodes & install latest Xcode: 
   - `xcodes install --latest --experimental-unxip`
   - `xcodes install --latest-prerelease --experimental-unxip`

@@ -15,6 +15,7 @@ _Pristine VM ready._
 
 - Lang: English / Region: NL
 - User: admin / admin
+- No FileVault
 - No Apple ID login
 - Enable location services
 - No screen time / Siri
@@ -25,8 +26,8 @@ _Pristine VM ready._
 
 - Enable automatic login in setting for admin
 - Sharing: Enable SSH & Screen Sharing
-NEW: - General > About: Set local hostname to `Virtual Machine`
 - Sharing: Set local hostname to `virtualmachine.local`
+- General > About: Set local hostname to `Virtual Machine`
 - Turn Firewall on
 - Lock screen; Turn off display: Never / Require password after screen saver: Never
 - Energy; Prevent automatic sleep: Yes / Put hard disks to sleep: No
@@ -34,6 +35,7 @@ NEW: - General > About: Set local hostname to `Virtual Machine`
 - Date & Time; Set timezone to Amsterdam, NL
 - Software Updates; Turn off except for security responses
 
+- Desktop: Remove widgets
 - Dock: Remove all apps except for Finder, Safari and Settings
 - Dock: Add Terminal to the dock
 
@@ -42,15 +44,12 @@ NEW: - General > About: Set local hostname to `Virtual Machine`
 - Install the MesloLGS NF fonts
 - Update Apple Terminal fonts: Preferences → Profiles → Text, click Change under Font and select MesloLGS NF family.
 - Install oh-my-zsh: `sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"`
+  - Note: This will trigger developer tool download to have git available, after it's finished try again
 - Add dotfiles: `mv zshrc ~/.zshrc && mv p10k.zsh ~/.p10k.zsh`
 - Install p10k: `git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"`
-  - Note: This will trigger developer tool download to have git available, after it's finished try again
 - Setup SSH key: `mkdir -p ~/.ssh && echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPGiURHzpEStKP4pi6TH5o6BXxzzwVA1imslB/ID5Vk3 id_vibecoding" > ~/.ssh/authorized_keys`
 - Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
-- Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes`
-
-NEW: (Not yet in my VM templates)
-- Install tools for Claude to use: `brew install ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
+- Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
 - Add PermissionAutoResponder.app to Applications, then;
   - add it as a login item: Settings > General > Login items > + Select the app
   - Give accessibility permissions!
@@ -73,20 +72,20 @@ _Base vibe VM ready._
 
 - Clone VM: `tart clone tahoe-base-vibe tahoe-vibecoding-template`
 
-NEW: - General > About: Set local hostname to `Vibecoding VM`
+- General > About: Set local hostname to `Vibecoding VM`
 - Sharing: Change hostname to `vibecoding`
-NEW: - Login to gh with `gh auth login` use the personal access token from 1Password (has reduces permissions)
+- Login to gh with `gh auth login` use the personal access token from 1Password (has reduces permissions)
 - Login into Xcodes & install latest Xcode: 
   - `xcodes install --latest --experimental-unxip`
   - `xcodes install --latest-prerelease --experimental-unxip`
   - `xcodes select`
   - The install runtimes: `xcodes runtimes "iOS 26.0"`
 - Drag Xcode into the dock
-- Login to Xcode with `vibecoding@nonstrict.com`
+BROKEN: - Login to Xcode with `vibecoding@nonstrict.com` // TODO: Fix 2FA
 - Go through wizard & login to claude code: `claude`
 - Mount the network share `_vibecoding` store credentials in keychain
 - Add the share to Settings > General > Login items > + Select the shared folder
-NEW: - Add `claude.md` to `~/.claude/claude.md`
+- Add `mv Claude.md ~/.claude/claude.md`
 
 - Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.
 - Run UITests once over SSH, this will trigger a permission prompt for XCTests to allow it to run.
@@ -103,4 +102,4 @@ _Tip: You can also use the Apple Screen Sharing app to get to the VM._
 
 ### Adding MCP servers
 
-NEW: - `claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking`
+SKIPPED: - `claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking`

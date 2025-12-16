@@ -148,31 +148,60 @@ vibe() {
         fi
     }
 
+    # Helper function to clean lingering directories that aren't valid worktrees
+    _cleanup_lingering_directory() {
+        local dir="$1"
+        local dir_name=$(basename "$dir")
+
+        # Check if directory is empty (or only has .DS_Store)
+        if _is_directory_empty "$dir"; then
+            rm -f "$dir/.DS_Store" 2>/dev/null
+            if rmdir "$dir" 2>/dev/null; then
+                echo "  [CLEANED] $dir_name (empty directory)"
+                return 0
+            fi
+        else
+            # Directory has files but isn't a valid worktree - remove it anyway
+            if rm -rf "$dir" 2>/dev/null; then
+                echo "  [CLEANED] $dir_name (lingering directory)"
+                return 0
+            else
+                echo "  [ FAIL  ] $dir_name - could not remove lingering directory"
+                return 1
+            fi
+        fi
+        return 1
+    }
+
     # Helper function to clean all worktrees across all repositories
     _clean_all_worktrees() {
         echo "Cleaning worktrees in: $LOCAL_WORKTREE_BASE"
         echo ""
-        
+
         if [ ! -d "$LOCAL_WORKTREE_BASE" ]; then
             echo "No worktree base directory found"
             return 0
         fi
-        
+
         local cleaned_count=0
         local skipped_count=0
-        
+        local lingering_count=0
+
         # Iterate through all repository directories
         for repo_dir in "$LOCAL_WORKTREE_BASE"/*; do
             if [ ! -d "$repo_dir" ]; then
                 continue
             fi
-            
+
             local repo_name=$(basename "$repo_dir")
-            local repo_has_worktrees=false
-            
+            local repo_has_output=false
+
             # Find the original repository to get worktree list
             local original_repo=""
-            
+
+            # Track which directories are valid worktrees
+            local -a valid_worktree_paths=()
+
             # Look for any worktree in this repo directory to find the original repo
             for worktree_dir in "$repo_dir"/*; do
                 if [ -d "$worktree_dir" ] && ([ -d "$worktree_dir/.git" ] || [ -f "$worktree_dir/.git" ]); then
@@ -185,52 +214,92 @@ vibe() {
                     fi
                 fi
             done
-            
-            if [ -z "$original_repo" ]; then
-                continue
-            fi
-            
-            # Get list of worktrees for this repository
-            local worktree_list=$(cd "$original_repo" && git worktree list --porcelain 2>/dev/null)
-            
-            # Parse worktree list and check each one in our directory
-            while IFS= read -r line; do
-                if [[ "$line" =~ ^worktree\ (.*)$ ]]; then
-                    local worktree_path="${match[1]}"
-                    
-                    # Check if this worktree is in our managed directory
-                    if [[ "$worktree_path" == "$LOCAL_WORKTREE_BASE/$repo_name"/* ]]; then
-                        local worktree_name=$(basename "$worktree_path")
-                        
-                        # Print repo header only when we find the first worktree
-                        if [ "$repo_has_worktrees" = false ]; then
-                            echo "[$repo_name]"
-                            repo_has_worktrees=true
-                        fi
-                        
-                        if _has_uncommitted_changes "$worktree_path"; then
-                            echo "  [ SKIP  ] $worktree_name - has uncommitted changes"
-                            ((skipped_count++))
-                        else
-                            _remove_worktree "$worktree_path" "$original_repo"
-                            local remove_status=$?
-                            if [ $remove_status -eq 0 ]; then
-                                echo "  [CLEANED] $worktree_name"
-                                ((cleaned_count++))
-                            elif [ $remove_status -eq 2 ]; then
-                                echo "  [CLEANED] $worktree_name + removed empty parent directory"
-                                ((cleaned_count++))
+
+            # If we found an original repo, process valid worktrees first
+            if [ -n "$original_repo" ]; then
+                # Get list of worktrees for this repository
+                local worktree_list=$(cd "$original_repo" && git worktree list --porcelain 2>/dev/null)
+
+                # Parse worktree list and check each one in our directory
+                while IFS= read -r line; do
+                    if [[ "$line" =~ ^worktree\ (.*)$ ]]; then
+                        local worktree_path="${match[1]}"
+
+                        # Check if this worktree is in our managed directory
+                        if [[ "$worktree_path" == "$LOCAL_WORKTREE_BASE/$repo_name"/* ]]; then
+                            local worktree_name=$(basename "$worktree_path")
+                            valid_worktree_paths+=("$worktree_path")
+
+                            # Print repo header only when we find the first item
+                            if [ "$repo_has_output" = false ]; then
+                                echo "[$repo_name]"
+                                repo_has_output=true
+                            fi
+
+                            if _has_uncommitted_changes "$worktree_path"; then
+                                echo "  [ SKIP  ] $worktree_name - has uncommitted changes"
+                                ((skipped_count++))
                             else
-                                echo "  [ FAIL  ] $worktree_name - could not remove"
+                                _remove_worktree "$worktree_path" "$original_repo"
+                                local remove_status=$?
+                                if [ $remove_status -eq 0 ]; then
+                                    echo "  [CLEANED] $worktree_name"
+                                    ((cleaned_count++))
+                                elif [ $remove_status -eq 2 ]; then
+                                    echo "  [CLEANED] $worktree_name + removed empty parent directory"
+                                    ((cleaned_count++))
+                                else
+                                    echo "  [ FAIL  ] $worktree_name - could not remove"
+                                fi
                             fi
                         fi
                     fi
+                done <<< "$worktree_list"
+            fi
+
+            # Now clean up any lingering directories that aren't valid worktrees
+            for subdir in "$repo_dir"/*; do
+                if [ ! -d "$subdir" ]; then
+                    continue
                 fi
-            done <<< "$worktree_list"
+
+                # Skip if this was a valid worktree (already processed above)
+                local is_valid_worktree=false
+                for valid_path in "${valid_worktree_paths[@]}"; do
+                    if [ "$subdir" = "$valid_path" ]; then
+                        is_valid_worktree=true
+                        break
+                    fi
+                done
+
+                if [ "$is_valid_worktree" = true ]; then
+                    continue
+                fi
+
+                # This is a lingering directory - print header if needed
+                if [ "$repo_has_output" = false ]; then
+                    echo "[$repo_name]"
+                    repo_has_output=true
+                fi
+
+                if _cleanup_lingering_directory "$subdir"; then
+                    ((lingering_count++))
+                fi
+            done
+
+            # After processing all subdirectories, check if repo_dir itself is now empty
+            if _is_directory_empty "$repo_dir"; then
+                rm -f "$repo_dir/.DS_Store" 2>/dev/null
+                if rmdir "$repo_dir" 2>/dev/null; then
+                    if [ "$repo_has_output" = true ]; then
+                        echo "  [CLEANED] (removed empty repository directory)"
+                    fi
+                fi
+            fi
         done
-        
+
         echo ""
-        echo "Removed: $cleaned_count, Skipped: $skipped_count"
+        echo "Removed: $cleaned_count, Skipped: $skipped_count, Lingering: $lingering_count"
     }
 
     # Helper function to clean a specific worktree

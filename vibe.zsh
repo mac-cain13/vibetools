@@ -272,7 +272,7 @@ vibe() {
         local lingering_count=0
 
         # Iterate through all repository directories
-        for repo_dir in "$LOCAL_WORKTREE_BASE"/*; do
+        for repo_dir in "$LOCAL_WORKTREE_BASE"/*(N); do
             if [ ! -d "$repo_dir" ]; then
                 continue
             fi
@@ -287,7 +287,7 @@ vibe() {
             local -a valid_worktree_paths=()
 
             # Look for any worktree in this repo directory to find the original repo
-            for worktree_dir in "$repo_dir"/*; do
+            for worktree_dir in "$repo_dir"/*(N); do
                 if [ -d "$worktree_dir" ] && ([ -d "$worktree_dir/.git" ] || [ -f "$worktree_dir/.git" ]); then
                     # Get the main repository root from this worktree
                     local git_common_dir=$(cd "$worktree_dir" && git rev-parse --git-common-dir 2>/dev/null)
@@ -342,7 +342,7 @@ vibe() {
             fi
 
             # Now clean up any lingering directories that aren't valid worktrees
-            for subdir in "$repo_dir"/*; do
+            for subdir in "$repo_dir"/*(N); do
                 if [ ! -d "$subdir" ]; then
                     continue
                 fi

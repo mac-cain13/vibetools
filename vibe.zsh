@@ -45,18 +45,20 @@ vibe() {
     }
 
     # Helper function to create worktree
+    # Usage: _create_worktree <worktree_name> [base_branch]
     _create_worktree() {
         local worktree_name="$1"
+        local base_branch="$2"
         echo "Creating worktree '$worktree_name'..."
-        
+
         # Ensure repository subdirectory exists
         mkdir -p "$LOCAL_WORKTREE_BASE/$REPO_NAME"
-        
+
         # Check if this is a remote branch reference (e.g., origin/branch-name)
         if [[ "$worktree_name" == origin/* ]]; then
             # Extract the branch name without origin/ prefix
             LOCAL_BRANCH_NAME="${worktree_name#origin/}"
-            
+
             # Check if the remote branch exists
             if git show-ref --verify --quiet refs/remotes/"$worktree_name"; then
                 echo "Found remote branch '$worktree_name', creating local tracking branch '$LOCAL_BRANCH_NAME'..."
@@ -81,24 +83,106 @@ vibe() {
             fi
         else
             # Branch doesn't exist, create new branch and worktree
-            if ! git worktree add -b "$worktree_name" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"; then
-                echo "Error: Failed to create worktree"
-                return 1
+            if [ -n "$base_branch" ]; then
+                # Validate base branch exists (local or remote)
+                if git show-ref --verify --quiet refs/heads/"$base_branch"; then
+                    echo "Creating branch '$worktree_name' from local branch '$base_branch'..."
+                elif git show-ref --verify --quiet refs/remotes/"$base_branch"; then
+                    echo "Creating branch '$worktree_name' from remote branch '$base_branch'..."
+                else
+                    echo "Error: Base branch '$base_branch' does not exist"
+                    echo "Available local branches:"
+                    git branch --format='  %(refname:short)'
+                    echo "Available remote branches:"
+                    git branch -r --format='  %(refname:short)'
+                    return 1
+                fi
+                if ! git worktree add -b "$worktree_name" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name" "$base_branch"; then
+                    echo "Error: Failed to create worktree"
+                    return 1
+                fi
+            else
+                if ! git worktree add -b "$worktree_name" "$LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"; then
+                    echo "Error: Failed to create worktree"
+                    return 1
+                fi
             fi
         fi
-        
+
         echo "Worktree created successfully at: $LOCAL_WORKTREE_BASE/$REPO_NAME/$worktree_name"
     }
 
     # Helper function to check if worktree has uncommitted changes
     _has_uncommitted_changes() {
         local worktree_path="$1"
-        
+
         # Change to the worktree directory and check git status
         if [ -d "$worktree_path" ]; then
             (cd "$worktree_path" && [ -n "$(git status --porcelain 2>/dev/null)" ])
         else
             return 1  # Directory doesn't exist, treat as no changes
+        fi
+    }
+
+    # Helper function to prompt for confirmation
+    # Returns 0 if user confirms (Enter), 1 if user aborts (Ctrl+C handled by trap)
+    _confirm_continue() {
+        local message="$1"
+        echo ""
+        echo "Warning: $message"
+        echo ""
+        echo -n "Press Enter to continue, or Ctrl+C to abort: "
+        read -r
+        return 0
+    }
+
+    # Helper function to parse --from argument from remaining args
+    # Sets FROM_BRANCH variable if found
+    # Usage: _parse_from_arg "$@"
+    _parse_from_arg() {
+        FROM_BRANCH=""
+        local i=1
+        while [ $i -le $# ]; do
+            local arg="${(P)i}"
+            if [ "$arg" = "--from" ]; then
+                local next=$((i + 1))
+                if [ $next -le $# ]; then
+                    FROM_BRANCH="${(P)next}"
+                else
+                    echo "Error: --from requires a branch name"
+                    return 1
+                fi
+                return 0
+            fi
+            ((i++))
+        done
+        return 0
+    }
+
+    # Helper function to handle worktree creation with --from logic
+    # Handles the confirmation prompt when branch exists but --from was specified
+    _setup_worktree() {
+        local worktree_name="$1"
+        local from_branch="$2"
+
+        # Check if worktree exists
+        _check_worktree_exists "$worktree_name"
+        local exists_status=$?
+
+        if [ $exists_status -eq 1 ]; then
+            # Directory exists but is not a valid worktree
+            return 1
+        elif [ $exists_status -eq 0 ]; then
+            # Worktree already exists
+            if [ -n "$from_branch" ]; then
+                # User specified --from but branch already exists
+                _confirm_continue "Branch '$worktree_name' already exists. The --from flag will be ignored."
+            fi
+            return 0
+        else
+            # Directory doesn't exist, create the worktree
+            _create_worktree "$worktree_name" "$from_branch" || return 1
+            return 0
         fi
     }
 
@@ -402,112 +486,111 @@ vibe() {
             echo "Connecting to vibecoding.local..."
             ssh -i "$SSH_KEY_PATH" "$SSH_USER_HOST" -t "export TMPDIR=\$(mktemp -d) && zsh -l -i"
             return 0
-        elif [ $# -eq 2 ]; then
+        elif [ $# -eq 2 ] || ([ $# -eq 4 ] && [ "$3" = "--from" ]); then
             # Worktree specified, need to be in git repo and follow same logic as main command
             WORKTREE_NAME="$2"
-            
+
+            # Parse --from if present
+            _parse_from_arg "$@" || return 1
+
             # Validate git repository
             _validate_git_repo || return 1
 
             # Get repository information
             _get_repo_info
-            
-            # Check if worktree exists
-            _check_worktree_exists "$WORKTREE_NAME"
-            local exists_status=$?
-            if [ $exists_status -eq 1 ]; then
-                return 1
-            elif [ $exists_status -eq 2 ]; then
-                # Create the worktree
-                _create_worktree "$WORKTREE_NAME" || return 1
-            fi
-            
+
+            # Setup worktree (handles exists check, --from confirmation, and creation)
+            _setup_worktree "$WORKTREE_NAME" "$FROM_BRANCH" || return 1
+
             # Connect to remote
             _connect_to_remote false
             return 0
         else
             echo "Error: Invalid arguments for --cli option"
-            echo "Usage: vibe --cli [worktree_name]"
+            echo "Usage: vibe --cli [worktree_name] [--from base_branch]"
             return 1
         fi
     fi
 
     # Check for --local option
     if [ "$1" = "--local" ]; then
-        if [ $# -eq 2 ]; then
+        if [ $# -eq 2 ] || ([ $# -eq 4 ] && [ "$3" = "--from" ]); then
             # Worktree specified, need to be in git repo and follow same logic as main command
             WORKTREE_NAME="$2"
-            
+
+            # Parse --from if present
+            _parse_from_arg "$@" || return 1
+
             # Validate git repository
             _validate_git_repo || return 1
 
             # Get repository information
             _get_repo_info
-            
-            # Check if worktree exists
-            _check_worktree_exists "$WORKTREE_NAME"
-            local exists_status=$?
-            if [ $exists_status -eq 1 ]; then
-                return 1
-            elif [ $exists_status -eq 2 ]; then
-                # Create the worktree
-                _create_worktree "$WORKTREE_NAME" || return 1
-            fi
-            
+
+            # Setup worktree (handles exists check, --from confirmation, and creation)
+            _setup_worktree "$WORKTREE_NAME" "$FROM_BRANCH" || return 1
+
             # Connect locally
             _connect_locally
             return $?
         else
             echo "Error: Invalid arguments for --local option"
-            echo "Usage: vibe --local <worktree_name>"
+            echo "Usage: vibe --local <worktree_name> [--from base_branch]"
             return 1
         fi
     fi
 
-    # Check if exactly one argument is provided
-    if [ $# -ne 1 ]; then
-        echo "Error: Please provide exactly one argument (worktree name)"
-        echo "Usage: vibe [worktree_name]"
-        echo "   or: vibe --cli [worktree_name]"
-        echo "   or: vibe --local [worktree_name]"
+    # Check argument count (1 for basic, 3 for with --from)
+    if [ $# -eq 1 ] || ([ $# -eq 3 ] && [ "$2" = "--from" ]); then
+        WORKTREE_NAME="$1"
+
+        # Parse --from if present
+        _parse_from_arg "$@" || return 1
+
+        # Validate git repository
+        _validate_git_repo || return 1
+
+        # Get repository information
+        _get_repo_info
+
+        # Setup worktree (handles exists check, --from confirmation, and creation)
+        _setup_worktree "$WORKTREE_NAME" "$FROM_BRANCH" || return 1
+
+        # Connect to remote with cly
+        _connect_to_remote true
+    else
+        echo "Error: Invalid arguments"
+        echo "Usage: vibe <worktree_name> [--from base_branch]"
+        echo "   or: vibe --cli [worktree_name] [--from base_branch]"
+        echo "   or: vibe --local <worktree_name> [--from base_branch]"
         echo "   or: vibe --clean [worktree_name]"
         return 1
     fi
-
-    WORKTREE_NAME="$1"
-
-    # Validate git repository
-    _validate_git_repo || return 1
-
-    # Get repository information
-    _get_repo_info
-
-    # Check if worktree exists
-    _check_worktree_exists "$WORKTREE_NAME"
-    local exists_status=$?
-    if [ $exists_status -eq 1 ]; then
-        return 1
-    elif [ $exists_status -eq 2 ]; then
-        # Create the worktree
-        _create_worktree "$WORKTREE_NAME" || return 1
-    fi
-
-    # Connect to remote with cly
-    _connect_to_remote true
 }
 
 # Completion function for vibe command
 _vibe() {
     local context state line
-    local -a options worktrees
-    
+    local -a options worktrees from_option
+
     # Define the main options
     options=(
         '--cli:Connect to remote CLI'
         '--local:Work locally without SSH'
         '--clean:Clean worktrees without uncommitted changes'
     )
-    
+
+    # Define --from option
+    from_option=('--from:Create branch from specified base branch')
+
+    # Helper to get branch list
+    _vibe_get_branches() {
+        local local_branches remote_branches
+        local_branches=($(git branch --format='%(refname:short)' 2>/dev/null))
+        remote_branches=($(git branch -r --format='%(refname:short)' 2>/dev/null | grep '^origin/' | sort -u))
+        reply=($local_branches $remote_branches)
+    }
+
     # Handle argument parsing
     if [[ $CURRENT -eq 2 ]]; then
         # First argument - could be option or worktree name
@@ -516,24 +599,15 @@ _vibe() {
             _describe 'options' options
             return 0
         fi
-        
+
         # In git repo - show options and branch names
-        local branches
-        local local_branches remote_branches
-        
-        # Get local branches
-        local_branches=($(git branch --format='%(refname:short)' 2>/dev/null))
-        
-        # Get remote branches (both with and without origin/ prefix for convenience)
-        remote_branches=($(git branch -r --format='%(refname:short)' 2>/dev/null | grep '^origin/' | sort -u))
-        
-        # Combine all branches
-        branches=($local_branches $remote_branches)
-        
+        _vibe_get_branches
+        local branches=("${reply[@]}")
+
         _alternative \
             'options:options:_describe "options" options' \
             'branches:git branches:_describe "branches" branches'
-        
+
     elif [[ $CURRENT -eq 3 ]]; then
         # Second argument - depends on first argument
         case "$words[2]" in
@@ -543,7 +617,7 @@ _vibe() {
                     local repo_root=$(git rev-parse --show-toplevel)
                     local repo_name=$(basename "$repo_root")
                     local worktree_base="/Volumes/External/Repositories/_vibecoding"
-                    
+
                     if [[ -d "$worktree_base/$repo_name" ]]; then
                         worktrees=($(ls "$worktree_base/$repo_name" 2>/dev/null))
                         _describe 'existing worktrees' worktrees
@@ -553,22 +627,45 @@ _vibe() {
             --cli|--local)
                 # For --cli and --local, show branch names like the main command
                 if git rev-parse --git-dir > /dev/null 2>&1; then
-                    local branches
-                    local local_branches remote_branches
-                    
-                    # Get local branches
-                    local_branches=($(git branch --format='%(refname:short)' 2>/dev/null))
-                    
-                    # Get remote branches
-                    remote_branches=($(git branch -r --format='%(refname:short)' 2>/dev/null | grep '^origin/' | sort -u))
-                    
-                    # Combine all branches
-                    branches=($local_branches $remote_branches)
-                    
+                    _vibe_get_branches
+                    local branches=("${reply[@]}")
                     _describe 'git branches' branches
                 fi
                 ;;
+            *)
+                # After a branch name (vibe <branch>), offer --from
+                if git rev-parse --git-dir > /dev/null 2>&1; then
+                    _describe 'options' from_option
+                fi
+                ;;
         esac
+
+    elif [[ $CURRENT -eq 4 ]]; then
+        # Third argument
+        case "$words[2]" in
+            --cli|--local)
+                # After vibe --cli/--local <branch>, offer --from
+                if git rev-parse --git-dir > /dev/null 2>&1; then
+                    _describe 'options' from_option
+                fi
+                ;;
+            *)
+                # After vibe <branch> --from, show branches for base
+                if [[ "$words[3]" == "--from" ]] && git rev-parse --git-dir > /dev/null 2>&1; then
+                    _vibe_get_branches
+                    local branches=("${reply[@]}")
+                    _describe 'base branch' branches
+                fi
+                ;;
+        esac
+
+    elif [[ $CURRENT -eq 5 ]]; then
+        # Fourth argument - after vibe --cli/--local <branch> --from
+        if [[ "$words[4]" == "--from" ]] && git rev-parse --git-dir > /dev/null 2>&1; then
+            _vibe_get_branches
+            local branches=("${reply[@]}")
+            _describe 'base branch' branches
+        fi
     fi
 }
 

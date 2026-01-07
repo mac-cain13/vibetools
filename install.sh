@@ -1,27 +1,91 @@
 #!/bin/bash
-# Install script for vibe.zsh
+# Install script for vibe - Git worktree manager for remote development
 
-# Configuration
-TARGET_DIR="$HOME/.config/zsh"
-TARGET_FILE="$TARGET_DIR/vibe.zsh"
-SOURCE_FILE="$(dirname "$0")/vibe.zsh"
+set -e
 
-# Create target directory if it doesn't exist
-mkdir -p "$TARGET_DIR"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Copy the file
-if cp "$SOURCE_FILE" "$TARGET_FILE"; then
-    echo "✓ Installed vibe.zsh to $TARGET_FILE"
-    
-    # Check if it's already sourced in .zshrc
-    if grep -q "source.*vibe.zsh" "$HOME/.zshrc" 2>/dev/null; then
-        echo "✓ vibe.zsh is already sourced in .zshrc"
-    else
-        echo ""
-        echo "To complete installation, add this line to your .zshrc:"
-        echo "source ~/.config/zsh/vibe.zsh"
+echo "Installing vibe..."
+echo ""
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to install uv if not present
+install_uv() {
+    echo "Installing uv (Python package manager)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Source the env to get uv in PATH for this session
+    if [ -f "$HOME/.local/bin/env" ]; then
+        source "$HOME/.local/bin/env"
+    elif [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
     fi
+
+    # Add to PATH for current session
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
+# Step 1: Check/install uv
+echo "Step 1: Checking for uv..."
+if command_exists uv; then
+    echo "  ✓ uv is already installed"
 else
-    echo "✗ Failed to install vibe.zsh"
+    install_uv
+    if command_exists uv; then
+        echo "  ✓ uv installed successfully"
+    else
+        echo "  ✗ Failed to install uv"
+        echo ""
+        echo "Please install uv manually: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+fi
+echo ""
+
+# Step 2: Install vibe using uv tool
+echo "Step 2: Installing vibe Python package..."
+cd "$SCRIPT_DIR"
+
+# Uninstall existing version if present (to ensure clean upgrade)
+uv tool uninstall vibe 2>/dev/null || true
+
+# Install the package
+if uv tool install . --force; then
+    echo "  ✓ vibe installed successfully"
+else
+    echo "  ✗ Failed to install vibe"
     exit 1
 fi
+echo ""
+
+# Step 3: Verify installation
+echo "Step 3: Verifying installation..."
+if command_exists vibe; then
+    echo "  ✓ 'vibe' command is available"
+    VIBE_PATH=$(which vibe)
+    echo "    Location: $VIBE_PATH"
+else
+    echo "  ⚠ 'vibe' command not found in PATH"
+    echo ""
+    echo "  You may need to add ~/.local/bin to your PATH:"
+    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "  Or restart your terminal."
+fi
+echo ""
+
+# Done
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Installation complete!"
+echo ""
+echo "Usage:"
+echo "  vibe feature-branch              # Create worktree, SSH with cly"
+echo "  vibe feature-branch --from main  # Create from main branch"
+echo "  vibe --cli                       # SSH to home directory"
+echo "  vibe --local feature-branch      # Work locally"
+echo "  vibe --clean                     # Clean all worktrees"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -47,8 +47,14 @@ After installation, the `vibe` command is available globally.
 ## Quick Start
 
 ```bash
-# Create worktree and connect to remote with coding tool
+# Create worktree and connect (prompts for coding tool)
 vibe feature-branch
+
+# Create worktree with cloud code (cly)
+vibe feature-branch --cc
+
+# Create worktree with open code (opencode)
+vibe feature-branch --oc
 
 # Create worktree from a specific base branch
 vibe feature-branch --from main
@@ -63,7 +69,7 @@ vibe --cli feature-branch
 vibe --cli
 
 # Work locally instead of SSH
-vibe --local feature-branch
+vibe --local feature-branch --cc
 
 # Clean up a specific worktree
 vibe --clean feature-branch
@@ -92,7 +98,7 @@ vibe --clean
 3. **Remote Connection** - SSH to your development machine and automatically:
    - Navigate to the worktree directory
    - Unlock macOS keychain for git operations
-   - Launch your coding environment (`cly` by default)
+   - Launch your coding environment (cloud code or open code)
 
 ## CLI Reference
 
@@ -104,6 +110,8 @@ Arguments:
             Supports origin/branch syntax for remote branches.
 
 Options:
+  --oc           Use open code (opencode) as the coding tool.
+  --cc           Use cloud code (cly) as the coding tool.
   --cli          Connect to remote CLI (shell only, without coding tool).
                  If no branch specified, connects to home directory.
   --local        Work locally instead of SSH to remote. Requires branch name.
@@ -112,6 +120,8 @@ Options:
   --from TEXT    Base branch to create new branch from.
   -h, --help     Show help message and exit.
 ```
+
+When neither `--oc` nor `--cc` is specified, vibe prompts you to select a coding tool using an arrow-key menu.
 
 ## Cleanup Behavior
 
@@ -158,8 +168,9 @@ REMOTE_WORKTREE_BASE = Path("/your/remote/path/_vibecoding")
 SSH_USER_HOST = "user@your-dev-machine.local"
 SSH_KEY_PATH = Path.home() / ".ssh" / "your_key"
 
-# Default coding tool command
-CODING_TOOL_CMD = "cly"  # or "code", "nvim", etc.
+# Coding tool commands
+CLOUD_CODE_CMD = "cly"       # Cloud code wrapper (--cc)
+OPEN_CODE_CMD = "opencode"   # Open code command (--oc)
 ```
 
 ## Features

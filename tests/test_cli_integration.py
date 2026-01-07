@@ -181,10 +181,12 @@ class TestLocalCommand:
         mock_setup.return_value = True
         mock_connect.return_value = 0
 
-        result = runner.invoke(app, ["--local", "feature-branch"])
+        result = runner.invoke(app, ["--local", "feature-branch", "--cc"])
 
         assert result.exit_code == 0
-        mock_connect.assert_called_once_with(Path("/worktrees/test-repo/feature-branch"))
+        mock_connect.assert_called_once_with(
+            Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
+        )
 
 
 class TestDefaultCommand:
@@ -217,7 +219,7 @@ class TestDefaultCommand:
         mock_setup.return_value = True
         mock_connect.return_value = 0
 
-        result = runner.invoke(app, ["feature-branch"])
+        result = runner.invoke(app, ["feature-branch", "--cc"])
 
         assert result.exit_code == 0
         mock_setup.assert_called_once_with(
@@ -227,6 +229,7 @@ class TestDefaultCommand:
             repo_name="test-repo",
             worktree_name="feature-branch",
             with_coding_tool=True,
+            coding_tool="cly",
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -246,7 +249,7 @@ class TestDefaultCommand:
         mock_setup.return_value = True
         mock_connect.return_value = 0
 
-        result = runner.invoke(app, ["feature-branch", "--from", "main"])
+        result = runner.invoke(app, ["feature-branch", "--from", "main", "--cc"])
 
         assert result.exit_code == 0
         mock_setup.assert_called_once_with(
@@ -357,6 +360,191 @@ class TestExitCodes:
         mock_setup.return_value = True
         mock_connect.return_value = 5
 
-        result = runner.invoke(app, ["feature-branch"])
+        result = runner.invoke(app, ["feature-branch", "--cc"])
 
         assert result.exit_code == 5
+
+
+class TestCodingToolOptions:
+    """Tests for --oc and --cc coding tool options."""
+
+    def test_help_shows_oc_and_cc_options(self) -> None:
+        """Should show --oc and --cc in help output."""
+        result = runner.invoke(app, ["--help"])
+
+        assert result.exit_code == 0
+        assert "--oc" in result.stdout
+        assert "--cc" in result.stdout
+        assert "open code" in result.stdout.lower()
+        assert "cloud code" in result.stdout.lower()
+
+    def test_oc_and_cc_together_errors(self) -> None:
+        """Should error when both --oc and --cc are provided."""
+        result = runner.invoke(app, ["feature-branch", "--oc", "--cc"])
+
+        assert result.exit_code == 1
+        assert "Cannot use both --oc and --cc" in result.stdout
+
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_oc_flag_uses_opencode(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should use opencode when --oc flag is provided."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["feature-branch", "--oc"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="opencode",
+        )
+
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_cc_flag_uses_cly(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should use cly when --cc flag is provided."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["feature-branch", "--cc"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="cly",
+        )
+
+    @patch("vibe.cli.connect_locally")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
+    def test_local_with_oc_flag(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should use opencode locally when --oc flag is provided."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--local", "feature-branch", "--oc"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            Path("/worktrees/test-repo/feature-branch"), coding_tool="opencode"
+        )
+
+    @patch("vibe.cli.connect_locally")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
+    def test_local_with_cc_flag(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should use cly locally when --cc flag is provided."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--local", "feature-branch", "--cc"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
+        )
+
+    @patch("vibe.cli.select_coding_tool")
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_prompts_when_no_flag(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_select: MagicMock,
+    ) -> None:
+        """Should prompt for tool selection when neither flag is provided."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+        mock_select.return_value = "opencode"
+
+        result = runner.invoke(app, ["feature-branch"])
+
+        assert result.exit_code == 0
+        mock_select.assert_called_once()
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="opencode",
+        )
+
+    @patch("vibe.cli.select_coding_tool")
+    @patch("vibe.cli.connect_locally")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
+    def test_local_prompts_when_no_flag(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_select: MagicMock,
+    ) -> None:
+        """Should prompt for tool selection locally when neither flag is provided."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+        mock_select.return_value = "cly"
+
+        result = runner.invoke(app, ["--local", "feature-branch"])
+
+        assert result.exit_code == 0
+        mock_select.assert_called_once()
+        mock_connect.assert_called_once_with(
+            Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
+        )

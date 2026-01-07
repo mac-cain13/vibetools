@@ -36,7 +36,8 @@ python3 -m pytest tests/test_cli_integration.py -v
 ### Run the CLI During Development
 ```bash
 python3 -m vibe --help
-python3 -m vibe feature-branch
+python3 -m vibe feature-branch --cc  # Use cloud code
+python3 -m vibe feature-branch --oc  # Use open code
 ```
 
 ## Project Structure
@@ -68,7 +69,7 @@ tests/
 ## Testing Requirements
 
 - **Always run tests** before considering work complete
-- Target: All 88+ tests passing
+- Target: All 96+ tests passing
 - Coverage target: >80%
 - Tests use `pytest` with `pytest-cov` for coverage
 - Mock external calls (subprocess, file system) in tests

@@ -211,3 +211,60 @@ def connect_locally(
 
     console.print("Returning to original directory...")
     return result.returncode
+
+
+def connect_to_remote_path(
+    remote_path: Path,
+    with_coding_tool: bool = True,
+    ssh_key: Path = SSH_KEY_PATH,
+    user_host: str = SSH_USER_HOST,
+    coding_tool: str = CODING_TOOL_CMD,
+) -> int:
+    """Connect to a specific remote path via SSH.
+
+    This can be used to connect to either a main repository or a worktree.
+
+    Args:
+        remote_path: Remote path to connect to
+        with_coding_tool: Whether to start the coding tool or just shell
+        ssh_key: Path to SSH private key
+        user_host: SSH user@host string
+        coding_tool: Command to run for coding tool
+
+    Returns:
+        Exit code from SSH command (255 typically indicates SSH failure)
+    """
+    # Validate SSH key exists
+    if not validate_ssh_key(ssh_key):
+        return 1
+
+    if with_coding_tool:
+        console.print(f"Connecting to {user_host} and starting {coding_tool}...")
+    else:
+        console.print(f"Connecting to {user_host}...")
+
+    # Build the setup commands
+    setup = build_remote_setup_commands(remote_path)
+
+    # Build the full remote command
+    if with_coding_tool:
+        escaped_tool = shlex.quote(coding_tool)
+        remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
+    else:
+        remote_cmd = f"{setup} && zsh -l -i"
+
+    # Build and execute SSH command
+    ssh_cmd = build_ssh_command(ssh_key, user_host)
+    ssh_cmd.append(remote_cmd)
+
+    result = subprocess.run(ssh_cmd)
+
+    # Provide helpful error messages for common SSH failures
+    if result.returncode == 255:
+        console.print()
+        console.print("[red]SSH connection failed.[/] Common causes:")
+        console.print(f"  - Host '{user_host}' is unreachable")
+        console.print(f"  - SSH key '{ssh_key}' is not authorized")
+        console.print("  - Network connectivity issues")
+
+    return result.returncode

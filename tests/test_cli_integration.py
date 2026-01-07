@@ -23,14 +23,6 @@ def make_repo_info(name: str = "test-repo", root: Path = Path("/repo")):
 class TestCliHelp:
     """Tests for CLI help and basic usage."""
 
-    def test_shows_usage_with_no_args(self) -> None:
-        """Should show help when called with no arguments."""
-        result = runner.invoke(app, [])
-        # Shows help and exits with 0
-        assert result.exit_code == 0
-        assert "Usage:" in result.output
-        assert "--cli" in result.output
-
     def test_shows_help_with_help_flag(self) -> None:
         """Should show help with --help flag."""
         result = runner.invoke(app, ["--help"])
@@ -548,3 +540,91 @@ class TestCodingToolOptions:
         mock_connect.assert_called_once_with(
             Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
         )
+
+
+class TestNoArgBehavior:
+    """Tests for no-argument context-aware behavior."""
+
+    @patch("vibe.cli.get_current_context")
+    def test_no_args_not_in_git_repo(self, mock_context: MagicMock) -> None:
+        """Should error when not in a git repo with no arguments."""
+        from vibe.git_ops import ContextType, CurrentContext
+
+        mock_context.return_value = CurrentContext(context_type=ContextType.NONE)
+
+        result = runner.invoke(app, [])
+
+        assert result.exit_code == 1
+        assert "Not in a git repository" in result.stdout
+
+    @patch("vibe.cli.connect_to_remote_path")
+    @patch("vibe.cli.get_current_context")
+    def test_no_args_in_main_repo(
+        self, mock_context: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        """Should connect to main repo when no args from main repo."""
+        from vibe.git_ops import ContextType, CurrentContext
+
+        mock_context.return_value = CurrentContext(
+            context_type=ContextType.MAIN_REPO,
+            local_path=Path("/Volumes/External/Repositories/my-repo"),
+            remote_path=Path("/Volumes/External/Repositories/my-repo"),
+            repo_name="my-repo",
+        )
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--cc"])
+
+        assert result.exit_code == 0
+        assert "main repository" in result.stdout
+        mock_connect.assert_called_once_with(
+            remote_path=Path("/Volumes/External/Repositories/my-repo"),
+            with_coding_tool=True,
+            coding_tool="cly",
+        )
+
+    @patch("vibe.cli.connect_to_remote_path")
+    @patch("vibe.cli.get_current_context")
+    def test_no_args_in_worktree(
+        self, mock_context: MagicMock, mock_connect: MagicMock
+    ) -> None:
+        """Should connect to worktree when no args from worktree."""
+        from vibe.git_ops import ContextType, CurrentContext
+
+        mock_context.return_value = CurrentContext(
+            context_type=ContextType.WORKTREE,
+            local_path=Path("/Volumes/External/Repositories/_vibecoding/my-repo/feature"),
+            remote_path=Path("/Volumes/External/Repositories/_vibecoding/my-repo/feature"),
+            repo_name="my-repo",
+            worktree_name="feature",
+        )
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--cc"])
+
+        assert result.exit_code == 0
+        assert "worktree" in result.stdout
+        mock_connect.assert_called_once_with(
+            remote_path=Path("/Volumes/External/Repositories/_vibecoding/my-repo/feature"),
+            with_coding_tool=True,
+            coding_tool="cly",
+        )
+
+    @patch("vibe.cli.get_current_context")
+    def test_no_args_repo_not_in_expected_location(
+        self, mock_context: MagicMock
+    ) -> None:
+        """Should error when repo is not in expected location."""
+        from vibe.git_ops import ContextType, CurrentContext
+
+        mock_context.return_value = CurrentContext(
+            context_type=ContextType.MAIN_REPO,
+            local_path=Path("/some/other/path"),
+            remote_path=None,  # No remote path means not in expected location
+            repo_name="my-repo",
+        )
+
+        result = runner.invoke(app, [])
+
+        assert result.exit_code == 1
+        assert "not in the expected location" in result.stdout

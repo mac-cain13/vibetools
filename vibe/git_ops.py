@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from vibe.config import LOCAL_WORKTREE_BASE
+from vibe.config import LOCAL_REPO_BASE, LOCAL_WORKTREE_BASE, REMOTE_REPO_BASE
 from vibe.utils import console
 
 # Default timeout for git operations (seconds)
@@ -409,3 +409,163 @@ def get_git_common_dir(worktree_path: Path) -> Path | None:
     if common_dir:
         return Path(common_dir).resolve()
     return None
+
+
+class ContextType(Enum):
+    """Type of git context the user is in."""
+
+    MAIN_REPO = "main_repo"  # In a main repository checkout
+    WORKTREE = "worktree"  # In a worktree
+    NONE = "none"  # Not in a git context
+
+
+@dataclass
+class CurrentContext:
+    """Information about the current git context."""
+
+    context_type: ContextType
+    local_path: Path | None = None
+    remote_path: Path | None = None
+    repo_name: str | None = None
+    worktree_name: str | None = None
+
+
+def is_inside_worktree_base(
+    cwd: Path | None = None,
+    worktree_base: Path = LOCAL_WORKTREE_BASE,
+) -> bool:
+    """Check if current directory is inside the worktree base directory.
+
+    Args:
+        cwd: Working directory to check (defaults to current directory)
+        worktree_base: Base directory for worktrees
+
+    Returns:
+        True if inside worktree base, False otherwise
+    """
+    if cwd is None:
+        cwd = Path.cwd()
+
+    try:
+        cwd.resolve().relative_to(worktree_base.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def is_git_worktree(cwd: Path | None = None) -> bool:
+    """Check if current directory is a git worktree (not the main repo).
+
+    Args:
+        cwd: Working directory to check (defaults to current directory)
+
+    Returns:
+        True if in a worktree, False if in main repo or not in git
+    """
+    if cwd is None:
+        cwd = Path.cwd()
+
+    # Get git dir and common dir
+    git_dir_result = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if git_dir_result.returncode != 0:
+        return False
+
+    common_dir_result = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if common_dir_result.returncode != 0:
+        return False
+
+    git_dir = Path(git_dir_result.stdout.strip())
+    common_dir = Path(common_dir_result.stdout.strip())
+
+    # If git-dir != git-common-dir, we're in a worktree
+    # Resolve relative paths based on cwd
+    if not git_dir.is_absolute():
+        git_dir = (cwd / git_dir).resolve()
+    if not common_dir.is_absolute():
+        common_dir = (cwd / common_dir).resolve()
+
+    return git_dir != common_dir
+
+
+def get_current_context(
+    cwd: Path | None = None,
+    repo_base: Path = LOCAL_REPO_BASE,
+    worktree_base: Path = LOCAL_WORKTREE_BASE,
+    remote_base: Path = REMOTE_REPO_BASE,
+) -> CurrentContext:
+    """Detect if we're in a main repo, worktree, or neither.
+
+    Args:
+        cwd: Working directory to check (defaults to current directory)
+        repo_base: Base directory for repositories
+        worktree_base: Base directory for worktrees
+        remote_base: Remote base directory for path mapping
+
+    Returns:
+        CurrentContext with type and path information
+    """
+    if cwd is None:
+        cwd = Path.cwd()
+
+    # Check if we're in a git repository at all
+    if not validate_git_repo(cwd):
+        return CurrentContext(context_type=ContextType.NONE)
+
+    repo_info = get_repo_info(cwd)
+
+    # Check if we're in a worktree
+    if is_git_worktree(cwd):
+        # We're in a worktree - extract worktree name from path
+        # Worktree path: {worktree_base}/{repo_name}/{worktree_name}
+        try:
+            rel_path = repo_info.root.relative_to(worktree_base)
+            parts = rel_path.parts
+            if len(parts) >= 2:
+                repo_name = parts[0]
+                worktree_name = parts[1]
+                remote_path = remote_base / "_vibecoding" / repo_name / worktree_name
+                return CurrentContext(
+                    context_type=ContextType.WORKTREE,
+                    local_path=repo_info.root,
+                    remote_path=remote_path,
+                    repo_name=repo_name,
+                    worktree_name=worktree_name,
+                )
+        except ValueError:
+            pass
+
+        # Fallback: worktree not in expected location
+        return CurrentContext(
+            context_type=ContextType.WORKTREE,
+            local_path=repo_info.root,
+            repo_name=repo_info.name,
+        )
+
+    # We're in a main repo
+    # Check if it's in the expected repo base
+    try:
+        repo_info.root.relative_to(repo_base)
+        remote_path = remote_base / repo_info.name
+        return CurrentContext(
+            context_type=ContextType.MAIN_REPO,
+            local_path=repo_info.root,
+            remote_path=remote_path,
+            repo_name=repo_info.name,
+        )
+    except ValueError:
+        # Repo not in expected location
+        return CurrentContext(
+            context_type=ContextType.MAIN_REPO,
+            local_path=repo_info.root,
+            repo_name=repo_info.name,
+        )

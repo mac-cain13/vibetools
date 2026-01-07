@@ -16,14 +16,19 @@ from vibe.connection import (
     connect_locally,
     connect_to_remote,
     connect_to_remote_home,
+    connect_to_remote_path,
 )
 from vibe.git_ops import (
+    ContextType,
+    CurrentContext,
     WorktreeStatus,
     check_worktree_exists,
     create_worktree,
+    get_current_context,
     get_local_branches,
     get_remote_branches,
     get_repo_info,
+    is_git_worktree,
     validate_git_repo,
 )
 
@@ -239,6 +244,7 @@ def main(
 
     \b
     Examples:
+        vibe                              # Connect to current repo/worktree
         vibe feature-branch              # Create worktree, prompts for tool
         vibe feature-branch --cc         # Create worktree, use cloud code
         vibe feature-branch --oc         # Create worktree, use open code
@@ -249,12 +255,13 @@ def main(
         vibe --local feature-branch --oc # Work locally with open code
         vibe --clean                      # Clean all worktrees
         vibe --clean feature-branch      # Clean specific worktree
-    """
-    # Show help if no arguments provided (mimics no_args_is_help behavior)
-    if branch is None and not cli and not local and not clean:
-        console.print(ctx.get_help())
-        raise typer.Exit(0)
 
+    \b
+    Context-aware behavior:
+        - In main repo: 'vibe' connects to that repo on remote
+        - In worktree: 'vibe' connects to that worktree on remote
+        - In worktree: 'vibe new-branch' branches from worktree's HEAD
+    """
     # Validate that --oc and --cc are not both provided
     if oc and cc:
         console.print("[red]Error:[/red] Cannot use both --oc and --cc")
@@ -295,7 +302,14 @@ def main(
             raise typer.Exit(1)
 
         repo_info = get_repo_info()
-        if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
+        # Determine base branch for worktree-aware branching
+        effective_from = from_branch
+        if effective_from is None and is_git_worktree():
+            # In a worktree without --from, we'll branch from current HEAD
+            # (create_worktree handles this by not specifying a base)
+            pass
+
+        if not setup_worktree(branch, effective_from, repo_info.name, repo_info.root):
             raise typer.Exit(1)
 
         exit_code = connect_to_remote(
@@ -325,12 +339,48 @@ def main(
         exit_code = connect_locally(worktree_path, coding_tool=coding_tool)
         raise typer.Exit(exit_code)
 
+    # Handle no-argument case: connect to current context
+    if branch is None:
+        context = get_current_context()
+
+        if context.context_type == ContextType.NONE:
+            console.print("[red]Error:[/] Not in a git repository")
+            raise typer.Exit(1)
+
+        if context.remote_path is None:
+            console.print(
+                "[red]Error:[/] Repository is not in the expected location "
+                f"({LOCAL_WORKTREE_BASE.parent})"
+            )
+            raise typer.Exit(1)
+
+        # Connect to the current context (main repo or worktree)
+        if context.context_type == ContextType.MAIN_REPO:
+            console.print(f"Connecting to main repository '{context.repo_name}'...")
+        else:
+            console.print(
+                f"Connecting to worktree '{context.worktree_name}' "
+                f"in '{context.repo_name}'..."
+            )
+
+        coding_tool = resolve_coding_tool(oc, cc)
+        exit_code = connect_to_remote_path(
+            remote_path=context.remote_path,
+            with_coding_tool=True,
+            coding_tool=coding_tool,
+        )
+        raise typer.Exit(exit_code)
+
     # Default: create worktree and connect with coding tool
     if not validate_git_repo():
         console.print("[red]Error:[/] Not in a git repository")
         raise typer.Exit(1)
 
     repo_info = get_repo_info()
+
+    # Worktree-aware branching: if in a worktree and no --from specified,
+    # the new branch will be created from the current HEAD (worktree's HEAD)
+    # This is the default git behavior when no base is specified
     if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
         raise typer.Exit(1)
 

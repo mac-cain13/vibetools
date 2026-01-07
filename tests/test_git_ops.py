@@ -8,16 +8,21 @@ from pathlib import Path
 import pytest
 
 from vibe.git_ops import (
+    ContextType,
+    CurrentContext,
     RepoInfo,
     WorktreeStatus,
     branch_exists_local,
     branch_exists_remote,
     check_worktree_exists,
     create_worktree,
+    get_current_context,
     get_local_branches,
     get_remote_branches,
     get_repo_info,
     has_uncommitted_changes,
+    is_git_worktree,
+    is_inside_worktree_base,
     validate_git_repo,
 )
 
@@ -369,3 +374,129 @@ class TestCreateWorktree:
 
         assert (temp_worktree_base / "test-repo").exists()
         assert worktree_path.exists()
+
+
+class TestIsInsideWorktreeBase:
+    """Tests for is_inside_worktree_base function."""
+
+    def test_inside_worktree_base(self, tmp_path: Path) -> None:
+        """Should return True when inside worktree base."""
+        worktree_base = tmp_path / "worktrees"
+        worktree_base.mkdir()
+        subdir = worktree_base / "repo" / "branch"
+        subdir.mkdir(parents=True)
+
+        assert is_inside_worktree_base(cwd=subdir, worktree_base=worktree_base) is True
+
+    def test_outside_worktree_base(self, tmp_path: Path) -> None:
+        """Should return False when outside worktree base."""
+        worktree_base = tmp_path / "worktrees"
+        worktree_base.mkdir()
+        other_dir = tmp_path / "other"
+        other_dir.mkdir()
+
+        assert is_inside_worktree_base(cwd=other_dir, worktree_base=worktree_base) is False
+
+
+class TestIsGitWorktree:
+    """Tests for is_git_worktree function."""
+
+    def test_main_repo_not_worktree(self, temp_git_repo: Path) -> None:
+        """Should return False for main repository."""
+        assert is_git_worktree(cwd=temp_git_repo) is False
+
+    def test_worktree_is_worktree(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should return True for a worktree."""
+        # Create a worktree
+        worktree_path = temp_worktree_base / "test-repo" / "feature"
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "feature", str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        assert is_git_worktree(cwd=worktree_path) is True
+
+    def test_not_git_repo(self, tmp_path: Path) -> None:
+        """Should return False when not in git repo."""
+        assert is_git_worktree(cwd=tmp_path) is False
+
+
+class TestGetCurrentContext:
+    """Tests for get_current_context function."""
+
+    def test_not_in_git_repo(self, tmp_path: Path) -> None:
+        """Should return NONE context when not in git repo."""
+        context = get_current_context(cwd=tmp_path)
+
+        assert context.context_type == ContextType.NONE
+        assert context.local_path is None
+        assert context.remote_path is None
+
+    def test_in_main_repo(self, temp_git_repo: Path, tmp_path: Path) -> None:
+        """Should return MAIN_REPO context in main repository."""
+        # Use repo_base and worktree_base that contain temp_git_repo
+        repo_base = temp_git_repo.parent
+
+        context = get_current_context(
+            cwd=temp_git_repo,
+            repo_base=repo_base,
+            worktree_base=repo_base / "_vibecoding",
+            remote_base=repo_base,
+        )
+
+        assert context.context_type == ContextType.MAIN_REPO
+        assert context.local_path == temp_git_repo
+        assert context.repo_name == "test-repo"
+        assert context.remote_path == repo_base / "test-repo"
+
+    def test_in_worktree(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should return WORKTREE context in a worktree."""
+        # Create a worktree in expected structure: worktree_base/repo_name/branch_name
+        repo_name = "test-repo"
+        worktree_name = "feature"
+        worktree_path = temp_worktree_base / repo_name / worktree_name
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", worktree_name, str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        remote_base = temp_worktree_base.parent
+
+        context = get_current_context(
+            cwd=worktree_path,
+            repo_base=temp_worktree_base.parent,
+            worktree_base=temp_worktree_base,
+            remote_base=remote_base,
+        )
+
+        assert context.context_type == ContextType.WORKTREE
+        assert context.local_path == worktree_path
+        assert context.repo_name == repo_name
+        assert context.worktree_name == worktree_name
+
+    def test_repo_not_in_expected_location(self, temp_git_repo: Path, tmp_path: Path) -> None:
+        """Should return MAIN_REPO but with no remote_path when not in expected location."""
+        # Use a different repo_base that doesn't contain temp_git_repo
+        different_base = tmp_path / "different_base"
+        different_base.mkdir()
+
+        context = get_current_context(
+            cwd=temp_git_repo,
+            repo_base=different_base,
+            worktree_base=different_base / "_vibecoding",
+            remote_base=different_base,
+        )
+
+        assert context.context_type == ContextType.MAIN_REPO
+        assert context.local_path == temp_git_repo
+        assert context.remote_path is None  # Not in expected location

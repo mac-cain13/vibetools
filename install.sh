@@ -53,6 +53,11 @@ cd "$SCRIPT_DIR"
 # Uninstall existing version if present (to ensure clean upgrade)
 uv tool uninstall vibe 2>/dev/null || true
 
+# Clear the build cache for vibe to ensure fresh build
+# This is necessary because uv caches wheels by name+version, and if the
+# version hasn't changed, it will use the stale cached wheel
+uv cache clean vibe 2>/dev/null || true
+
 # Install the package
 if uv tool install . --force; then
     echo "  ✓ vibe installed successfully"
@@ -83,7 +88,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Installation complete!"
 echo ""
 echo "Usage:"
-echo "  vibe feature-branch              # Create worktree, SSH with cly"
+echo "  vibe                             # Connect to current repo/worktree"
+echo "  vibe feature-branch              # Create worktree, SSH with coding tool"
 echo "  vibe feature-branch --from main  # Create from main branch"
 echo "  vibe --cli                       # SSH to home directory"
 echo "  vibe --local feature-branch      # Work locally"

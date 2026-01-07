@@ -83,8 +83,15 @@ _Base vibe VM ready._
 - Drag Xcode into the dock
 BROKEN: - Login to Xcode with `vibecoding@nonstrict.com` // TODO: Fix 2FA
 - Go through wizard & login to claude code: `claude`
-- Mount the network share `_vibecoding` store credentials in keychain
-- Add the share to Settings > General > Login items > + Select the shared folder
+- Mount the network share `Repositories`:
+  - Finder > Go > Connect to Server > `smb://hostname/Repositories`
+  - Store credentials in keychain
+  - macOS mounts it at `/Volumes/Repositories`
+- Create symlink for path alignment:
+  - `sudo mkdir -p /Volumes/External`
+  - `sudo ln -s /Volumes/Repositories /Volumes/External/Repositories`
+  - This ensures paths match between host (`/Volumes/External/Repositories/...`) and VM
+- Add the share to Settings > General > Login items > + Select the mounted Repositories folder
 - Add `mv Claude.md ~/.claude/claude.md`
 
 - Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.

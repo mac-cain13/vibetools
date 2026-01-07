@@ -47,6 +47,9 @@ After installation, the `vibe` command is available globally.
 ## Quick Start
 
 ```bash
+# Connect to current repo or worktree (prompts for coding tool)
+vibe
+
 # Create worktree and connect (prompts for coding tool)
 vibe feature-branch
 
@@ -78,6 +81,14 @@ vibe --clean feature-branch
 vibe --clean
 ```
 
+### Context-Aware Behavior
+
+**vibe** automatically detects your current git context:
+
+- **In a main repository**: `vibe` connects to that repository on the remote machine
+- **In a worktree**: `vibe` connects to that worktree on the remote machine
+- **Creating branches from a worktree**: `vibe new-branch` branches from the worktree's current HEAD (not the main repo)
+
 ## How It Works
 
 1. **Worktree Creation** - Creates git worktrees in organized directory structure:
@@ -108,6 +119,7 @@ vibe [OPTIONS] [BRANCH]
 Arguments:
   BRANCH    Branch name for the worktree. Creates worktree and connects to it.
             Supports origin/branch syntax for remote branches.
+            If omitted, connects to current repo/worktree context.
 
 Options:
   --oc           Use open code (opencode) as the coding tool.
@@ -122,6 +134,28 @@ Options:
 ```
 
 When neither `--oc` nor `--cc` is specified, vibe prompts you to select a coding tool using an arrow-key menu.
+
+### No-Argument Behavior
+
+When you run `vibe` without a branch name:
+
+| Context | Behavior |
+|---------|----------|
+| In main repo | Connects to that repo on the remote machine |
+| In worktree | Connects to that worktree on the remote machine |
+| Not in git | Shows error: "Not in a git repository" |
+
+### Worktree-Aware Branching
+
+When creating a new branch from inside an existing worktree:
+
+```bash
+# From inside a worktree - branches from worktree's HEAD
+vibe new-feature
+
+# Override with --from to branch from a specific base
+vibe new-feature --from main
+```
 
 ## Cleanup Behavior
 
@@ -160,9 +194,13 @@ Edit the constants in `vibe/config.py` for your setup:
 ```python
 from pathlib import Path
 
-# Worktree base directories
-LOCAL_WORKTREE_BASE = Path("/your/local/path/_vibecoding")
-REMOTE_WORKTREE_BASE = Path("/your/remote/path/_vibecoding")
+# Repository base directories (must match on both host and VM for git to work)
+LOCAL_REPO_BASE = Path("/Volumes/External/Repositories")
+REMOTE_REPO_BASE = Path("/Volumes/External/Repositories")
+
+# Worktree base directories (inside repo base)
+LOCAL_WORKTREE_BASE = LOCAL_REPO_BASE / "_vibecoding"
+REMOTE_WORKTREE_BASE = REMOTE_REPO_BASE / "_vibecoding"
 
 # SSH configuration
 SSH_USER_HOST = "user@your-dev-machine.local"
@@ -172,6 +210,8 @@ SSH_KEY_PATH = Path.home() / ".ssh" / "your_key"
 CLOUD_CODE_CMD = "cly"       # Cloud code wrapper (--cc)
 OPEN_CODE_CMD = "opencode"   # Open code command (--oc)
 ```
+
+**Important:** The paths must be identical on both the host and VM for git worktree operations to work correctly. This is achieved by mounting the shared folder at the same path (using a symlink on the VM if needed).
 
 ## Features
 

@@ -13,6 +13,7 @@ from vibe.connection import (
     connect_locally,
     connect_to_remote,
     connect_to_remote_home,
+    connect_to_remote_path,
     escape_shell_path,
     validate_ssh_key,
 )
@@ -340,6 +341,85 @@ class TestConnectLocally:
         result = connect_locally(
             worktree_path=missing_path,
             coding_tool="cly",
+        )
+
+        assert result == 1
+
+
+class TestConnectToRemotePath:
+    """Tests for connect_to_remote_path function."""
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_connects_with_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should SSH to path and run coding tool."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        result = connect_to_remote_path(
+            remote_path=Path("/remote/my-repo"),
+            with_coding_tool=True,
+            ssh_key=Path("/key"),
+            user_host="user@host",
+            coding_tool="cly",
+        )
+
+        assert result == 0
+        mock_run.assert_called_once()
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "cly" in remote_cmd
+        assert "/remote/my-repo" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_connects_without_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should SSH to path without coding tool."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_path(
+            remote_path=Path("/remote/my-repo"),
+            with_coding_tool=False,
+            ssh_key=Path("/key"),
+            user_host="user@host",
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "zsh -l -i" in remote_cmd
+        assert "/remote/my-repo" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_returns_exit_code(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should return the exit code from SSH."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=42)
+
+        result = connect_to_remote_path(
+            remote_path=Path("/remote/path"),
+            ssh_key=Path("/key"),
+            user_host="user@host",
+        )
+
+        assert result == 42
+
+    def test_returns_error_when_ssh_key_missing(self, tmp_path: Path) -> None:
+        """Should return error code when SSH key doesn't exist."""
+        missing_key = tmp_path / "nonexistent"
+
+        result = connect_to_remote_path(
+            remote_path=Path("/remote/path"),
+            ssh_key=missing_key,
+            user_host="user@host",
         )
 
         assert result == 1

@@ -481,62 +481,54 @@ class TestCodingToolOptions:
             Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
         )
 
-    @patch("vibe.cli.select_coding_tool")
     @patch("vibe.cli.connect_to_remote")
     @patch("vibe.cli.setup_worktree")
     @patch("vibe.cli.get_repo_info")
     @patch("vibe.cli.validate_git_repo")
-    def test_prompts_when_no_flag(
+    def test_defaults_to_cloud_code_when_no_flag(
         self,
         mock_validate: MagicMock,
         mock_repo_info: MagicMock,
         mock_setup: MagicMock,
         mock_connect: MagicMock,
-        mock_select: MagicMock,
     ) -> None:
-        """Should prompt for tool selection when neither flag is provided."""
+        """Should default to cloud code when neither flag is provided."""
         mock_validate.return_value = True
         mock_repo_info.return_value = make_repo_info()
         mock_setup.return_value = True
         mock_connect.return_value = 0
-        mock_select.return_value = "opencode"
 
         result = runner.invoke(app, ["feature-branch"])
 
         assert result.exit_code == 0
-        mock_select.assert_called_once()
         mock_connect.assert_called_once_with(
             repo_name="test-repo",
             worktree_name="feature-branch",
             with_coding_tool=True,
-            coding_tool="opencode",
+            coding_tool="cly",
         )
 
-    @patch("vibe.cli.select_coding_tool")
     @patch("vibe.cli.connect_locally")
     @patch("vibe.cli.setup_worktree")
     @patch("vibe.cli.get_repo_info")
     @patch("vibe.cli.validate_git_repo")
     @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
-    def test_local_prompts_when_no_flag(
+    def test_local_defaults_to_cloud_code_when_no_flag(
         self,
         mock_validate: MagicMock,
         mock_repo_info: MagicMock,
         mock_setup: MagicMock,
         mock_connect: MagicMock,
-        mock_select: MagicMock,
     ) -> None:
-        """Should prompt for tool selection locally when neither flag is provided."""
+        """Should default to cloud code locally when neither flag is provided."""
         mock_validate.return_value = True
         mock_repo_info.return_value = make_repo_info()
         mock_setup.return_value = True
         mock_connect.return_value = 0
-        mock_select.return_value = "cly"
 
         result = runner.invoke(app, ["--local", "feature-branch"])
 
         assert result.exit_code == 0
-        mock_select.assert_called_once()
         mock_connect.assert_called_once_with(
             Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
         )

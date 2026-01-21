@@ -106,7 +106,3 @@ _Note:_ For Xcode to be able to build over SSH you need to unlock the keychain b
 - SSH into the VM: `ssh -i ~/.ssh/id_vibecoding admin@$(tart ip vibecoding)`
 
 _Tip: You can also use the Apple Screen Sharing app to get to the VM._
-
-### Adding MCP servers
-
-SKIPPED: - `claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking`

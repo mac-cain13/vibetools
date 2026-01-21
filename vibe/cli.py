@@ -8,8 +8,6 @@ from typing import List, Optional
 import typer
 from rich.console import Console
 
-from simple_term_menu import TerminalMenu
-
 from vibe.cleanup import clean_all_worktrees, clean_specific_worktree
 from vibe.config import CLOUD_CODE_CMD, LOCAL_WORKTREE_BASE, OPEN_CODE_CMD
 from vibe.connection import (
@@ -81,32 +79,8 @@ app = typer.Typer(
 console = Console()
 
 
-def select_coding_tool() -> str:
-    """Prompt user to select coding tool using arrow-key menu.
-
-    Returns:
-        The selected coding tool command string.
-    """
-    options = ["Cloud Code (cly)", "Open Code (opencode)"]
-    terminal_menu = TerminalMenu(
-        options,
-        title="Select coding tool:",
-        menu_cursor_style=("fg_cyan", "bold"),
-        menu_highlight_style=("fg_cyan", "bold"),
-    )
-    selected_index = terminal_menu.show()
-
-    if selected_index is None:
-        # User cancelled (e.g., Ctrl+C)
-        raise typer.Abort()
-
-    if selected_index == 0:
-        return CLOUD_CODE_CMD
-    return OPEN_CODE_CMD
-
-
 def resolve_coding_tool(oc: bool, cc: bool) -> str:
-    """Resolve which coding tool to use based on flags or prompt.
+    """Resolve which coding tool to use based on flags.
 
     Args:
         oc: Whether --oc flag was provided
@@ -117,14 +91,12 @@ def resolve_coding_tool(oc: bool, cc: bool) -> str:
 
     Note:
         Assumes --oc and --cc mutual exclusivity is validated before calling.
+        Defaults to cloud code if neither flag is specified.
     """
     if oc:
         return OPEN_CODE_CMD
-    if cc:
-        return CLOUD_CODE_CMD
-
-    # Neither specified - prompt user
-    return select_coding_tool()
+    # Default to cloud code (--cc is implicit)
+    return CLOUD_CODE_CMD
 
 
 def setup_worktree(
@@ -235,7 +207,7 @@ def main(
     cc: bool = typer.Option(
         False,
         "--cc",
-        help="Use cloud code (cly) as the coding tool.",
+        help="Use cloud code (cly) as the coding tool (default).",
     ),
 ) -> None:
     """Git worktree manager for remote development sessions.
@@ -245,13 +217,12 @@ def main(
     \b
     Examples:
         vibe                              # Connect to current repo/worktree
-        vibe feature-branch              # Create worktree, prompts for tool
-        vibe feature-branch --cc         # Create worktree, use cloud code
+        vibe feature-branch              # Create worktree, use cloud code (default)
         vibe feature-branch --oc         # Create worktree, use open code
         vibe feature-branch --from main  # Create from main branch
         vibe --cli                        # SSH to home directory
         vibe --cli feature-branch        # Create worktree, SSH shell only
-        vibe --local feature-branch      # Work locally, prompts for tool
+        vibe --local feature-branch      # Work locally with cloud code
         vibe --local feature-branch --oc # Work locally with open code
         vibe --clean                      # Clean all worktrees
         vibe --clean feature-branch      # Clean specific worktree

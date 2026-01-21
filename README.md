@@ -47,17 +47,17 @@ After installation, the `vibe` command is available globally.
 ## Quick Start
 
 ```bash
-# Connect to current repo or worktree (prompts for coding tool)
+# Connect to current repo or worktree (uses cloud code by default)
 vibe
 
-# Create worktree and connect (prompts for coding tool)
+# Create worktree and connect (defaults to cloud code)
 vibe feature-branch
-
-# Create worktree with cloud code (cly)
-vibe feature-branch --cc
 
 # Create worktree with open code (opencode)
 vibe feature-branch --oc
+
+# Explicitly use cloud code (cly)
+vibe feature-branch --cc
 
 # Create worktree from a specific base branch
 vibe feature-branch --from main
@@ -123,7 +123,7 @@ Arguments:
 
 Options:
   --oc           Use open code (opencode) as the coding tool.
-  --cc           Use cloud code (cly) as the coding tool.
+  --cc           Use cloud code (cly) as the coding tool (default).
   --cli          Connect to remote CLI (shell only, without coding tool).
                  If no branch specified, connects to home directory.
   --local        Work locally instead of SSH to remote. Requires branch name.
@@ -133,7 +133,7 @@ Options:
   -h, --help     Show help message and exit.
 ```
 
-When neither `--oc` nor `--cc` is specified, vibe prompts you to select a coding tool using an arrow-key menu.
+When neither `--oc` nor `--cc` is specified, vibe defaults to cloud code (`--cc`).
 
 ### No-Argument Behavior
 

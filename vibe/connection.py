@@ -169,9 +169,17 @@ def connect_to_remote_home(
 
     console.print(f"Connecting to {user_host}...")
 
-    # Build SSH command with just shell startup
+    # Build setup commands including keychain unlock
+    commands = [
+        "security -v unlock-keychain -p admin ~/Library/Keychains/login.keychain-db",
+        "export TMPDIR=$(mktemp -d)",
+        "zsh -l -i",
+    ]
+    remote_cmd = " && ".join(commands)
+
+    # Build SSH command with setup commands
     ssh_cmd = build_ssh_command(ssh_key, user_host)
-    ssh_cmd.append("export TMPDIR=$(mktemp -d) && zsh -l -i")
+    ssh_cmd.append(remote_cmd)
 
     result = subprocess.run(ssh_cmd)
 

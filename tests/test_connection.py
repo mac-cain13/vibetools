@@ -281,6 +281,25 @@ class TestConnectToRemoteHome:
         remote_cmd = call_args[-1]
         assert "TMPDIR" in remote_cmd
 
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_includes_keychain_unlock(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should unlock keychain when connecting to home."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_home(
+            ssh_key=Path("/key"),
+            user_host="user@host",
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "security -v unlock-keychain" in remote_cmd
+        assert "login.keychain-db" in remote_cmd
+
 
 class TestConnectLocally:
     """Tests for connect_locally function."""

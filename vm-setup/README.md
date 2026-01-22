@@ -60,10 +60,7 @@ _Base VM ready._
 
 - Clone VM: `tart clone tahoe-base tahoe-base-vibe`
 
-- Install Volta: `curl https://get.volta.sh | bash`
-- Install node: `volta install node`
-- Install Claude Code: `npm install -g @anthropic-ai/claude-code`
-  - Migrate to local setup: `claude migrate-installer`
+- Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`
 - Add cly wrapper to `mkdir -p ~/.config/zsh && mv claude-wrapper.zsh ~/.config/zsh/claude-wrapper.zsh`
 
 _Base vibe VM ready._

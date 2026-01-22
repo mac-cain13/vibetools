@@ -25,7 +25,7 @@ cly() {
     local title_pid=$!
     
     # Run Claude with dangerous permissions
-    "$HOME/.claude/local/claude" --dangerously-skip-permissions "$@"
+    "$HOME/.local/bin/claude" --dangerously-skip-permissions "$@"
     local exit_code=$?
     
     # Kill the background title setter

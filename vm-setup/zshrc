@@ -31,3 +31,6 @@ source $(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 
 # Source Claude wrapper with dynamic terminal title
 [ -f ~/.config/zsh/claude-wrapper.zsh ] && source ~/.config/zsh/claude-wrapper.zsh
+
+# Source Codex wrapper with dynamic terminal title
+[ -f ~/.config/zsh/codex-wrapper.zsh ] && source ~/.config/zsh/codex-wrapper.zsh

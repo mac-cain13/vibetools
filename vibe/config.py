@@ -15,8 +15,6 @@ SSH_KEY_PATH = Path.home() / ".ssh" / "id_vibecoding"
 SSH_USER_HOST = "admin@vibecoding.local"
 
 # Coding tool commands
-CLOUD_CODE_CMD = "cly"       # Cloud code wrapper
-OPEN_CODE_CMD = "opencode"   # Open code (direct invocation)
-
-# Default coding tool (for backwards compatibility)
-CODING_TOOL_CMD = CLOUD_CODE_CMD
+CLAUDE_CODE_CMD = "cly"      # Claude Code wrapper
+CODEX_CMD = "cdx"            # Codex wrapper
+OPEN_CODE_CMD = "opencode"   # OpenCode (direct invocation)

@@ -36,9 +36,10 @@ python3 -m pytest tests/test_cli_integration.py -v
 ### Run the CLI During Development
 ```bash
 python3 -m vibe --help
-python3 -m vibe                      # Connect to current repo/worktree
-python3 -m vibe feature-branch --cc  # Use cloud code
-python3 -m vibe feature-branch --oc  # Use open code
+python3 -m vibe                         # Connect to current repo/worktree (prompts for tool)
+python3 -m vibe feature-branch --codex  # Use Codex
+python3 -m vibe feature-branch --claude # Use Claude Code
+python3 -m vibe feature-branch --oc     # Use OpenCode
 ```
 
 ## Project Structure

@@ -56,12 +56,18 @@ _Pristine VM ready._
 
 _Base VM ready._
 
-### Install Claude Code
+### Install Claude Code & Codex
 
 - Clone VM: `tart clone tahoe-base tahoe-base-vibe`
 
 - Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`
-- Add cly wrapper to `mkdir -p ~/.config/zsh && mv claude-wrapper.zsh ~/.config/zsh/claude-wrapper.zsh`
+- Install Codex: `npm install -g @openai/codex`
+- Add wrappers:
+  ```bash
+  mkdir -p ~/.config/zsh
+  mv claude-wrapper.zsh ~/.config/zsh/claude-wrapper.zsh
+  mv codex-wrapper.zsh ~/.config/zsh/codex-wrapper.zsh
+  ```
 
 _Base vibe VM ready._
 

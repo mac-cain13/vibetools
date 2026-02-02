@@ -47,17 +47,17 @@ After installation, the `vibe` command is available globally.
 ## Quick Start
 
 ```bash
-# Connect to current repo or worktree (uses cloud code by default)
+# Connect to current repo or worktree (interactive tool picker)
 vibe
 
-# Create worktree and connect (defaults to cloud code)
-vibe feature-branch
+# Create worktree with Codex
+vibe feature-branch --codex
 
-# Create worktree with open code (opencode)
+# Create worktree with Claude Code
+vibe feature-branch --claude
+
+# Create worktree with OpenCode
 vibe feature-branch --oc
-
-# Explicitly use cloud code (cly)
-vibe feature-branch --cc
 
 # Create worktree from a specific base branch
 vibe feature-branch --from main
@@ -72,7 +72,7 @@ vibe --cli feature-branch
 vibe --cli
 
 # Work locally instead of SSH
-vibe --local feature-branch --cc
+vibe --local feature-branch --claude
 
 # Clean up a specific worktree
 vibe --clean feature-branch
@@ -122,8 +122,9 @@ Arguments:
             If omitted, connects to current repo/worktree context.
 
 Options:
-  --oc           Use open code (opencode) as the coding tool.
-  --cc           Use cloud code (cly) as the coding tool (default).
+  --codex        Use Codex (cdx) as the coding tool.
+  --claude       Use Claude Code (cly) as the coding tool.
+  --oc           Use OpenCode (opencode) as the coding tool.
   --cli          Connect to remote CLI (shell only, without coding tool).
                  If no branch specified, connects to home directory.
   --local        Work locally instead of SSH to remote. Requires branch name.
@@ -133,7 +134,7 @@ Options:
   -h, --help     Show help message and exit.
 ```
 
-When neither `--oc` nor `--cc` is specified, vibe defaults to cloud code (`--cc`).
+When no coding tool flag is specified, vibe prompts with an interactive picker.
 
 ### No-Argument Behavior
 
@@ -207,8 +208,9 @@ SSH_USER_HOST = "user@your-dev-machine.local"
 SSH_KEY_PATH = Path.home() / ".ssh" / "your_key"
 
 # Coding tool commands
-CLOUD_CODE_CMD = "cly"       # Cloud code wrapper (--cc)
-OPEN_CODE_CMD = "opencode"   # Open code command (--oc)
+CLAUDE_CODE_CMD = "cly"      # Claude Code wrapper (--claude)
+CODEX_CMD = "cdx"            # Codex wrapper (--codex)
+OPEN_CODE_CMD = "opencode"   # OpenCode command (--oc)
 ```
 
 **Important:** The paths must be identical on both the host and VM for git worktree operations to work correctly. This is achieved by mounting the shared folder at the same path (using a symlink on the VM if needed).

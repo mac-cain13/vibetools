@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from vibe.config import (
-    CODING_TOOL_CMD,
+    CLAUDE_CODE_CMD,
     REMOTE_WORKTREE_BASE,
     SSH_KEY_PATH,
     SSH_USER_HOST,
@@ -96,7 +96,7 @@ def connect_to_remote(
     ssh_key: Path = SSH_KEY_PATH,
     user_host: str = SSH_USER_HOST,
     remote_base: Path = REMOTE_WORKTREE_BASE,
-    coding_tool: str = CODING_TOOL_CMD,
+    coding_tool: str = CLAUDE_CODE_CMD,
 ) -> int:
     """Connect to remote machine via SSH.
 
@@ -196,7 +196,7 @@ def connect_to_remote_home(
 
 def connect_locally(
     worktree_path: Path,
-    coding_tool: str = CODING_TOOL_CMD,
+    coding_tool: str = CLAUDE_CODE_CMD,
 ) -> int:
     """Run the coding tool locally in the worktree.
 
@@ -226,7 +226,7 @@ def connect_to_remote_path(
     with_coding_tool: bool = True,
     ssh_key: Path = SSH_KEY_PATH,
     user_host: str = SSH_USER_HOST,
-    coding_tool: str = CODING_TOOL_CMD,
+    coding_tool: str = CLAUDE_CODE_CMD,
 ) -> int:
     """Connect to a specific remote path via SSH.
 

@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 
 from vibe.cleanup import clean_all_worktrees, clean_specific_worktree
-from vibe.config import CLOUD_CODE_CMD, LOCAL_WORKTREE_BASE, OPEN_CODE_CMD
+from vibe.config import CLAUDE_CODE_CMD, CODEX_CMD, LOCAL_WORKTREE_BASE, OPEN_CODE_CMD
 from vibe.connection import (
     connect_locally,
     connect_to_remote,
@@ -79,24 +79,54 @@ app = typer.Typer(
 console = Console()
 
 
-def resolve_coding_tool(oc: bool, cc: bool) -> str:
+def prompt_coding_tool_choice() -> str:
+    """Prompt user to select a coding tool interactively.
+
+    Returns:
+        The coding tool command to use.
+    """
+    from simple_term_menu import TerminalMenu
+
+    options = ["Codex", "OpenCode", "Claude"]
+    tool_map = {
+        0: CODEX_CMD,
+        1: OPEN_CODE_CMD,
+        2: CLAUDE_CODE_CMD,
+    }
+
+    console.print("\n[bold]Select coding tool:[/bold]")
+    menu = TerminalMenu(options, cursor_index=0)
+    choice = menu.show()
+
+    if choice is None:
+        # User cancelled (e.g., Ctrl+C)
+        raise typer.Abort()
+
+    return tool_map[choice]
+
+
+def resolve_coding_tool(oc: bool, codex: bool, claude: bool) -> Optional[str]:
     """Resolve which coding tool to use based on flags.
 
     Args:
         oc: Whether --oc flag was provided
-        cc: Whether --cc flag was provided
+        codex: Whether --codex flag was provided
+        claude: Whether --claude flag was provided
 
     Returns:
-        The coding tool command to use.
+        The coding tool command to use, or None if no flag specified.
 
     Note:
-        Assumes --oc and --cc mutual exclusivity is validated before calling.
-        Defaults to cloud code if neither flag is specified.
+        Assumes mutual exclusivity is validated before calling.
+        Returns None if no flag is specified (caller should prompt).
     """
     if oc:
         return OPEN_CODE_CMD
-    # Default to cloud code (--cc is implicit)
-    return CLOUD_CODE_CMD
+    if codex:
+        return CODEX_CMD
+    if claude:
+        return CLAUDE_CODE_CMD
+    return None  # No flag = interactive prompt
 
 
 def setup_worktree(
@@ -202,12 +232,17 @@ def main(
     oc: bool = typer.Option(
         False,
         "--oc",
-        help="Use open code (opencode) as the coding tool.",
+        help="Use OpenCode as the coding tool.",
     ),
-    cc: bool = typer.Option(
+    codex: bool = typer.Option(
         False,
-        "--cc",
-        help="Use cloud code (cly) as the coding tool (default).",
+        "--codex",
+        help="Use Codex as the coding tool.",
+    ),
+    claude: bool = typer.Option(
+        False,
+        "--claude",
+        help="Use Claude Code as the coding tool.",
     ),
 ) -> None:
     """Git worktree manager for remote development sessions.
@@ -216,16 +251,16 @@ def main(
 
     \b
     Examples:
-        vibe                              # Connect to current repo/worktree
-        vibe feature-branch              # Create worktree, use cloud code (default)
-        vibe feature-branch --oc         # Create worktree, use open code
-        vibe feature-branch --from main  # Create from main branch
+        vibe                              # Interactive tool picker
+        vibe feature-branch --codex       # Create worktree, use Codex
+        vibe feature-branch --claude      # Create worktree, use Claude Code
+        vibe feature-branch --oc          # Create worktree, use OpenCode
+        vibe feature-branch --from main   # Create from main branch
         vibe --cli                        # SSH to home directory
-        vibe --cli feature-branch        # Create worktree, SSH shell only
-        vibe --local feature-branch      # Work locally with cloud code
-        vibe --local feature-branch --oc # Work locally with open code
+        vibe --cli feature-branch         # Create worktree, SSH shell only
+        vibe --local feature-branch       # Work locally (prompts for tool)
         vibe --clean                      # Clean all worktrees
-        vibe --clean feature-branch      # Clean specific worktree
+        vibe --clean feature-branch       # Clean specific worktree
 
     \b
     Context-aware behavior:
@@ -233,9 +268,13 @@ def main(
         - In worktree: 'vibe' connects to that worktree on remote
         - In worktree: 'vibe new-branch' branches from worktree's HEAD
     """
-    # Validate that --oc and --cc are not both provided
-    if oc and cc:
-        console.print("[red]Error:[/red] Cannot use both --oc and --cc")
+    # Validate that only one coding tool flag is provided
+    flags_set = sum([oc, codex, claude])
+    if flags_set > 1:
+        console.print(
+            "[red]Error:[/red] Cannot use multiple coding tool flags "
+            "(--oc, --codex, --claude)"
+        )
         raise typer.Exit(1)
 
     # Handle --clean option
@@ -305,7 +344,9 @@ def main(
         if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
             raise typer.Exit(1)
 
-        coding_tool = resolve_coding_tool(oc, cc)
+        coding_tool = resolve_coding_tool(oc, codex, claude)
+        if coding_tool is None:
+            coding_tool = prompt_coding_tool_choice()
         worktree_path = LOCAL_WORKTREE_BASE / repo_info.name / branch
         exit_code = connect_locally(worktree_path, coding_tool=coding_tool)
         raise typer.Exit(exit_code)
@@ -334,7 +375,9 @@ def main(
                 f"in '{context.repo_name}'..."
             )
 
-        coding_tool = resolve_coding_tool(oc, cc)
+        coding_tool = resolve_coding_tool(oc, codex, claude)
+        if coding_tool is None:
+            coding_tool = prompt_coding_tool_choice()
         exit_code = connect_to_remote_path(
             remote_path=context.remote_path,
             with_coding_tool=True,
@@ -355,7 +398,9 @@ def main(
     if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
         raise typer.Exit(1)
 
-    coding_tool = resolve_coding_tool(oc, cc)
+    coding_tool = resolve_coding_tool(oc, codex, claude)
+    if coding_tool is None:
+        coding_tool = prompt_coding_tool_choice()
     exit_code = connect_to_remote(
         repo_name=repo_info.name,
         worktree_name=branch,

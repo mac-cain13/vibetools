@@ -33,7 +33,7 @@ else:  # WSL
     REMOTE_REPO_BASE = Path("/mnt/repos")
 
     # SSH configuration
-    SSH_USER_HOST = "admin@vibecoding"
+    SSH_USER_HOST = "admin@172.21.0.10"
 
     # No keychain on Windows/WSL
     UNLOCK_KEYCHAIN = False

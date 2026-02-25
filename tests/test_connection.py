@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vibe.connection import (
+    _wrap_for_wsl,
     build_remote_setup_commands,
     build_ssh_command,
     connect_locally,
@@ -106,6 +107,16 @@ class TestBuildRemoteSetupCommands:
 
         assert "security" not in cmd
 
+    def test_skips_keychain_when_command_is_none(self) -> None:
+        """Should skip keychain when keychain_command is None."""
+        cmd = build_remote_setup_commands(
+            Path("/remote/path"),
+            unlock_keychain=True,
+            keychain_command=None,
+        )
+
+        assert "security" not in cmd
+
     def test_includes_tmpdir_setup(self) -> None:
         """Should include TMPDIR setup."""
         cmd = build_remote_setup_commands(Path("/remote/path"))
@@ -117,6 +128,41 @@ class TestBuildRemoteSetupCommands:
         cmd = build_remote_setup_commands(Path("/remote/path"))
 
         assert " && " in cmd
+
+    def test_uses_custom_keychain_command(self) -> None:
+        """Should use custom keychain command when provided."""
+        cmd = build_remote_setup_commands(
+            Path("/remote/path"),
+            unlock_keychain=True,
+            keychain_command="custom-keychain-unlock",
+        )
+
+        assert "custom-keychain-unlock" in cmd
+        assert "security" not in cmd
+
+
+class TestWrapForWsl:
+    """Tests for _wrap_for_wsl helper function."""
+
+    def test_wraps_simple_command(self) -> None:
+        """Should wrap command with wsl -e zsh."""
+        result = _wrap_for_wsl("cd /path && cly")
+        assert result == "wsl -e zsh -l -i -c 'cd /path && cly'"
+
+    def test_escapes_single_quotes(self) -> None:
+        """Should escape single quotes in inner command."""
+        result = _wrap_for_wsl("cd '/path with spaces'")
+        assert "wsl -e zsh -l -i -c" in result
+        assert "/path with spaces" in result
+
+    def test_preserves_complex_commands(self) -> None:
+        """Should preserve complex chained commands."""
+        inner = "cd /mnt/repos/myrepo && export TMPDIR=$(mktemp -d) && cly"
+        result = _wrap_for_wsl(inner)
+        assert "wsl -e zsh -l -i -c" in result
+        assert "cd /mnt/repos/myrepo" in result
+        assert "TMPDIR" in result
+        assert "cly" in result
 
 
 class TestConnectToRemote:
@@ -233,6 +279,86 @@ class TestConnectToRemote:
 
         assert result == 255
 
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_with_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should wrap command with wsl -e when wsl_wrapper=True."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote(
+            repo_name="my-repo",
+            worktree_name="feature",
+            with_coding_tool=True,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_base=Path("/mnt/repos/_vibecoding"),
+            coding_tool="cly",
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert remote_cmd.startswith("wsl -e zsh -l -i -c")
+        assert "cd " in remote_cmd
+        assert "/mnt/repos/_vibecoding/my-repo/feature" in remote_cmd
+        assert "TMPDIR" in remote_cmd
+        assert "cly" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_without_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should wrap shell-only command with wsl -e when wsl_wrapper=True."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote(
+            repo_name="my-repo",
+            worktree_name="feature",
+            with_coding_tool=False,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_base=Path("/mnt/repos/_vibecoding"),
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert remote_cmd.startswith("wsl -e zsh -l -i -c")
+        assert "cd " in remote_cmd
+        assert "/mnt/repos/_vibecoding/my-repo/feature" in remote_cmd
+        # Should drop into interactive shell, not just exit
+        assert "exec zsh" in remote_cmd
+        # Should NOT include a coding tool command
+        assert "cly" not in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_no_keychain(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """WSL wrapper should not include keychain unlock."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote(
+            repo_name="repo",
+            worktree_name="branch",
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_base=Path("/mnt/repos/_vibecoding"),
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "security" not in remote_cmd
+        assert "keychain" not in remote_cmd
+
 
 class TestConnectToRemoteHome:
     """Tests for connect_to_remote_home function."""
@@ -299,6 +425,70 @@ class TestConnectToRemoteHome:
         remote_cmd = call_args[-1]
         assert "security -v unlock-keychain" in remote_cmd
         assert "login.keychain-db" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_enters_wsl(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should enter WSL interactively when wsl_wrapper=True."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_home(
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert remote_cmd == "wsl -e zsh -l -i"
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_no_keychain(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """WSL wrapper should not include keychain unlock."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_home(
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            unlock_keychain=False,
+            keychain_command=None,
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "security" not in remote_cmd
+        assert "keychain" not in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_no_keychain_when_disabled(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should skip keychain when unlock_keychain=False on macOS path."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_home(
+            ssh_key=Path("/key"),
+            user_host="user@host",
+            unlock_keychain=False,
+            keychain_command=None,
+            wsl_wrapper=False,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "security" not in remote_cmd
+        assert "TMPDIR" in remote_cmd
+        assert "zsh -l -i" in remote_cmd
 
 
 class TestConnectLocally:
@@ -442,3 +632,53 @@ class TestConnectToRemotePath:
         )
 
         assert result == 1
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_with_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should wrap command with wsl -e when wsl_wrapper=True."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_path(
+            remote_path=Path("/mnt/repos/my-repo"),
+            with_coding_tool=True,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            coding_tool="cly",
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert remote_cmd.startswith("wsl -e zsh -l -i -c")
+        assert "/mnt/repos/my-repo" in remote_cmd
+        assert "cly" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_wsl_wrapper_without_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should wrap shell-only command with wsl -e when wsl_wrapper=True."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_path(
+            remote_path=Path("/mnt/repos/my-repo"),
+            with_coding_tool=False,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            wsl_wrapper=True,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert remote_cmd.startswith("wsl -e zsh -l -i -c")
+        assert "/mnt/repos/my-repo" in remote_cmd
+        # Should drop into interactive shell, not just exit
+        assert "exec zsh" in remote_cmd
+        # Should NOT have coding tool
+        assert "cly" not in remote_cmd

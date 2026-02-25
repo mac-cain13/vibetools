@@ -8,9 +8,12 @@ from pathlib import Path
 
 from vibe.config import (
     CLAUDE_CODE_CMD,
+    KEYCHAIN_COMMAND,
     REMOTE_WORKTREE_BASE,
+    REMOTE_WSL_WRAPPER,
     SSH_KEY_PATH,
     SSH_USER_HOST,
+    UNLOCK_KEYCHAIN,
 )
 from vibe.utils import console
 
@@ -63,13 +66,15 @@ def build_ssh_command(
 
 def build_remote_setup_commands(
     worktree_path: Path,
-    unlock_keychain: bool = True,
+    unlock_keychain: bool = UNLOCK_KEYCHAIN,
+    keychain_command: str | None = KEYCHAIN_COMMAND,
 ) -> str:
     """Build the shell commands to run on remote machine.
 
     Args:
         worktree_path: Remote path to the worktree
         unlock_keychain: Whether to unlock the macOS keychain
+        keychain_command: The keychain unlock command to use
 
     Returns:
         Shell command string to execute remotely
@@ -78,15 +83,30 @@ def build_remote_setup_commands(
     escaped_path = escape_shell_path(worktree_path)
     commands = [f"cd {escaped_path}"]
 
-    if unlock_keychain:
-        commands.append(
-            "security -v unlock-keychain -p admin ~/Library/Keychains/login.keychain-db"
-        )
+    if unlock_keychain and keychain_command:
+        commands.append(keychain_command)
 
     # Create temporary directory to avoid permission issues
     commands.append("export TMPDIR=$(mktemp -d)")
 
     return " && ".join(commands)
+
+
+def _wrap_for_wsl(inner_cmd: str) -> str:
+    """Wrap a command to run inside WSL on a Windows remote.
+
+    On Windows remotes, SSH lands in Windows shell. We need to use
+    wsl -e to enter WSL and run commands there.
+
+    Args:
+        inner_cmd: The command string to run inside WSL
+
+    Returns:
+        Command string wrapped with wsl -e
+    """
+    # Escape single quotes in the inner command for the outer shell
+    escaped_inner = inner_cmd.replace("'", "'\\''")
+    return f"wsl -e zsh -l -i -c '{escaped_inner}'"
 
 
 def connect_to_remote(
@@ -97,6 +117,7 @@ def connect_to_remote(
     user_host: str = SSH_USER_HOST,
     remote_base: Path = REMOTE_WORKTREE_BASE,
     coding_tool: str = CLAUDE_CODE_CMD,
+    wsl_wrapper: bool = REMOTE_WSL_WRAPPER,
 ) -> int:
     """Connect to remote machine via SSH.
 
@@ -108,6 +129,7 @@ def connect_to_remote(
         user_host: SSH user@host string
         remote_base: Remote base path for worktrees
         coding_tool: Command to run for coding tool
+        wsl_wrapper: Whether to wrap commands with wsl -e
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -123,15 +145,25 @@ def connect_to_remote(
     else:
         console.print(f"Connecting to {user_host} and navigating to worktree...")
 
-    # Build the setup commands
-    setup = build_remote_setup_commands(remote_path)
-
-    # Build the full remote command - escape the coding tool name
-    if with_coding_tool:
-        escaped_tool = shlex.quote(coding_tool)
-        remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
+    if wsl_wrapper:
+        # WSL: wrap entire command in wsl -e
+        escaped_path = escape_shell_path(remote_path)
+        inner_parts = [f"cd {escaped_path}", "export TMPDIR=$(mktemp -d)"]
+        if with_coding_tool:
+            inner_parts.append(coding_tool)
+        else:
+            # Drop into interactive shell after setup
+            inner_parts.append("exec zsh")
+        inner_cmd = " && ".join(inner_parts)
+        remote_cmd = _wrap_for_wsl(inner_cmd)
     else:
-        remote_cmd = f"{setup} && zsh -l -i"
+        # macOS: direct command execution
+        setup = build_remote_setup_commands(remote_path)
+        if with_coding_tool:
+            escaped_tool = shlex.quote(coding_tool)
+            remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
+        else:
+            remote_cmd = f"{setup} && zsh -l -i"
 
     # Build and execute SSH command
     ssh_cmd = build_ssh_command(ssh_key, user_host)
@@ -153,12 +185,18 @@ def connect_to_remote(
 def connect_to_remote_home(
     ssh_key: Path = SSH_KEY_PATH,
     user_host: str = SSH_USER_HOST,
+    unlock_keychain: bool = UNLOCK_KEYCHAIN,
+    keychain_command: str | None = KEYCHAIN_COMMAND,
+    wsl_wrapper: bool = REMOTE_WSL_WRAPPER,
 ) -> int:
     """Connect to remote machine's home directory via SSH.
 
     Args:
         ssh_key: Path to SSH private key
         user_host: SSH user@host string
+        unlock_keychain: Whether to unlock the macOS keychain
+        keychain_command: The keychain unlock command to use
+        wsl_wrapper: Whether to wrap commands with wsl -e
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -169,13 +207,17 @@ def connect_to_remote_home(
 
     console.print(f"Connecting to {user_host}...")
 
-    # Build setup commands including keychain unlock
-    commands = [
-        "security -v unlock-keychain -p admin ~/Library/Keychains/login.keychain-db",
-        "export TMPDIR=$(mktemp -d)",
-        "zsh -l -i",
-    ]
-    remote_cmd = " && ".join(commands)
+    if wsl_wrapper:
+        # WSL: just enter WSL interactively
+        remote_cmd = "wsl -e zsh -l -i"
+    else:
+        # macOS: unlock keychain and start interactive shell
+        commands = []
+        if unlock_keychain and keychain_command:
+            commands.append(keychain_command)
+        commands.append("export TMPDIR=$(mktemp -d)")
+        commands.append("zsh -l -i")
+        remote_cmd = " && ".join(commands)
 
     # Build SSH command with setup commands
     ssh_cmd = build_ssh_command(ssh_key, user_host)
@@ -227,6 +269,7 @@ def connect_to_remote_path(
     ssh_key: Path = SSH_KEY_PATH,
     user_host: str = SSH_USER_HOST,
     coding_tool: str = CLAUDE_CODE_CMD,
+    wsl_wrapper: bool = REMOTE_WSL_WRAPPER,
 ) -> int:
     """Connect to a specific remote path via SSH.
 
@@ -238,6 +281,7 @@ def connect_to_remote_path(
         ssh_key: Path to SSH private key
         user_host: SSH user@host string
         coding_tool: Command to run for coding tool
+        wsl_wrapper: Whether to wrap commands with wsl -e
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -251,15 +295,25 @@ def connect_to_remote_path(
     else:
         console.print(f"Connecting to {user_host}...")
 
-    # Build the setup commands
-    setup = build_remote_setup_commands(remote_path)
-
-    # Build the full remote command
-    if with_coding_tool:
-        escaped_tool = shlex.quote(coding_tool)
-        remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
+    if wsl_wrapper:
+        # WSL: wrap entire command in wsl -e
+        escaped_path = escape_shell_path(remote_path)
+        inner_parts = [f"cd {escaped_path}", "export TMPDIR=$(mktemp -d)"]
+        if with_coding_tool:
+            inner_parts.append(coding_tool)
+        else:
+            # Drop into interactive shell after setup
+            inner_parts.append("exec zsh")
+        inner_cmd = " && ".join(inner_parts)
+        remote_cmd = _wrap_for_wsl(inner_cmd)
     else:
-        remote_cmd = f"{setup} && zsh -l -i"
+        # macOS: direct command execution
+        setup = build_remote_setup_commands(remote_path)
+        if with_coding_tool:
+            escaped_tool = shlex.quote(coding_tool)
+            remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
+        else:
+            remote_cmd = f"{setup} && zsh -l -i"
 
     # Build and execute SSH command
     ssh_cmd = build_ssh_command(ssh_key, user_host)

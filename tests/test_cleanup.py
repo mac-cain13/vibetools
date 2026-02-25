@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -15,7 +16,27 @@ from vibe.cleanup import (
     cleanup_lingering_directory,
     remove_worktree,
 )
-from vibe.utils import is_directory_empty
+from vibe.utils import is_directory_empty, is_junk_file
+
+
+class TestIsJunkFile:
+    """Tests for is_junk_file utility function."""
+
+    def test_ds_store_is_junk(self) -> None:
+        """Should recognize .DS_Store as junk on macOS."""
+        assert is_junk_file(".DS_Store") is True
+
+    def test_regular_file_is_not_junk(self) -> None:
+        """Should not treat regular files as junk."""
+        assert is_junk_file("file.txt") is False
+        assert is_junk_file("README.md") is False
+
+    @patch("vibe.utils.JUNK_FILES", ["Thumbs.db", "desktop.ini"])
+    def test_windows_junk_files(self) -> None:
+        """Should recognize Windows junk files when configured."""
+        assert is_junk_file("Thumbs.db") is True
+        assert is_junk_file("desktop.ini") is True
+        assert is_junk_file(".DS_Store") is False
 
 
 class TestIsDirectoryEmpty:
@@ -51,6 +72,24 @@ class TestIsDirectoryEmpty:
     def test_nonexistent_directory(self, tmp_path: Path) -> None:
         """Should return False for non-existent directory."""
         assert is_directory_empty(tmp_path / "nonexistent") is False
+
+    @patch("vibe.utils.JUNK_FILES", ["Thumbs.db", "desktop.ini"])
+    def test_directory_with_only_windows_junk(self, tmp_path: Path) -> None:
+        """Should return True for directory with only Windows junk files."""
+        dir_path = tmp_path / "win_junk"
+        dir_path.mkdir()
+        (dir_path / "Thumbs.db").write_text("")
+        (dir_path / "desktop.ini").write_text("")
+        assert is_directory_empty(dir_path) is True
+
+    @patch("vibe.utils.JUNK_FILES", ["Thumbs.db", "desktop.ini"])
+    def test_directory_with_windows_junk_and_real_files(self, tmp_path: Path) -> None:
+        """Should return False when real files exist alongside Windows junk."""
+        dir_path = tmp_path / "win_mixed"
+        dir_path.mkdir()
+        (dir_path / "Thumbs.db").write_text("")
+        (dir_path / "code.py").write_text("print('hello')")
+        assert is_directory_empty(dir_path) is False
 
 
 class TestRemoveWorktree:

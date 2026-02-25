@@ -49,7 +49,8 @@ vibe/
 ├── __init__.py      # Package init
 ├── __main__.py      # Entry point for python -m vibe
 ├── cli.py           # Typer CLI interface
-├── config.py        # Constants (paths, SSH settings)
+├── platform.py      # Platform detection (macOS vs WSL)
+├── config.py        # Constants (paths, SSH settings) — platform-aware
 ├── connection.py    # SSH and local connection handling
 ├── cleanup.py       # Worktree cleanup operations
 ├── git_ops.py       # Git operations (worktree, branch management)
@@ -59,12 +60,17 @@ tests/
 ├── test_cli_integration.py  # CLI integration tests
 ├── test_cleanup.py          # Cleanup module tests
 ├── test_connection.py       # Connection module tests
-└── test_git_ops.py          # Git operations tests
+├── test_git_ops.py          # Git operations tests
+└── test_platform.py         # Platform detection tests
+
+vm-setup/              # macOS VM setup (tart)
+vm-setup-windows/      # Windows/Hyper-V/WSL VM setup
 ```
 
 ## Key Files
 
-- `vibe/config.py` - All configurable constants (SSH key path, remote host, worktree paths)
+- `vibe/platform.py` - Platform detection (macOS vs WSL), override with `VIBE_PLATFORM=wsl`
+- `vibe/config.py` - All configurable constants (SSH key path, remote host, worktree paths) — platform-conditional
 - `vibe/cli.py` - Main entry point, handles all CLI flags and routing
 - `pyproject.toml` - Project metadata, dependencies, and tool configuration
 

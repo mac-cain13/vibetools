@@ -14,7 +14,8 @@ from vibe.git_ops import (
     has_uncommitted_changes,
     validate_git_repo,
 )
-from vibe.utils import console, is_directory_empty
+from vibe.config import JUNK_FILES
+from vibe.utils import console, is_directory_empty, is_junk_file
 
 
 @dataclass
@@ -64,10 +65,11 @@ def remove_worktree(
     # Check if parent directory is now empty
     parent_dir = worktree_path.parent
     if is_directory_empty(parent_dir):
-        # Remove .DS_Store if present
-        ds_store = parent_dir / ".DS_Store"
-        if ds_store.exists():
-            ds_store.unlink()
+        # Remove any junk files before rmdir
+        for junk in JUNK_FILES:
+            junk_path = parent_dir / junk
+            if junk_path.exists():
+                junk_path.unlink()
 
         # Try to remove the empty directory
         try:
@@ -91,10 +93,11 @@ def cleanup_lingering_directory(directory: Path) -> bool:
     dir_name = directory.name
 
     if is_directory_empty(directory):
-        # Remove .DS_Store if present
-        ds_store = directory / ".DS_Store"
-        if ds_store.exists():
-            ds_store.unlink()
+        # Remove any junk files before rmdir
+        for junk in JUNK_FILES:
+            junk_path = directory / junk
+            if junk_path.exists():
+                junk_path.unlink()
 
         try:
             directory.rmdir()
@@ -218,9 +221,10 @@ def clean_all_worktrees(
 
         # After processing all subdirectories, check if repo_dir itself is now empty
         if is_directory_empty(repo_dir):
-            ds_store = repo_dir / ".DS_Store"
-            if ds_store.exists():
-                ds_store.unlink()
+            for junk in JUNK_FILES:
+                junk_path = repo_dir / junk
+                if junk_path.exists():
+                    junk_path.unlink()
             try:
                 repo_dir.rmdir()
                 if repo_has_output:

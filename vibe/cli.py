@@ -98,10 +98,10 @@ def prompt_shell_choice() -> Shell:
     """
     from simple_term_menu import TerminalMenu
 
-    options = ["WSL", "PowerShell"]
+    options = ["PowerShell", "WSL"]
     shell_map = {
-        0: Shell.WSL,
-        1: Shell.POWERSHELL,
+        0: Shell.POWERSHELL,
+        1: Shell.WSL,
     }
 
     console.print("\n[bold]Select remote shell:[/bold]")
@@ -125,18 +125,18 @@ def prompt_coding_tool_choice(powershell: bool = False) -> str:
     """
     from simple_term_menu import TerminalMenu
 
-    options = ["Codex", "OpenCode", "Claude"]
+    options = ["Claude", "Codex", "OpenCode"]
     if powershell:
         tool_map = {
-            0: CODEX_DIRECT_CMD,
-            1: OPEN_CODE_DIRECT_CMD,
-            2: CLAUDE_CODE_DIRECT_CMD,
+            0: CLAUDE_CODE_DIRECT_CMD,
+            1: CODEX_DIRECT_CMD,
+            2: OPEN_CODE_DIRECT_CMD,
         }
     else:
         tool_map = {
-            0: CODEX_CMD,
-            1: OPEN_CODE_CMD,
-            2: CLAUDE_CODE_CMD,
+            0: CLAUDE_CODE_CMD,
+            1: CODEX_CMD,
+            2: OPEN_CODE_CMD,
         }
 
     console.print("\n[bold]Select coding tool:[/bold]")

@@ -97,8 +97,10 @@ def build_remote_setup_commands(
 def _wrap_for_wsl(inner_cmd: str) -> str:
     """Wrap a command to run inside WSL on a Windows remote.
 
-    On Windows remotes, SSH lands in Windows shell. We need to use
-    wsl -e to enter WSL and run commands there.
+    On Windows remotes, SSH lands in PowerShell. We use wsl -e to enter
+    WSL and run commands there. The outer string uses single quotes to
+    prevent PowerShell from interpreting $() subexpressions in the inner
+    zsh command.
 
     Args:
         inner_cmd: The command string to run inside WSL
@@ -106,28 +108,10 @@ def _wrap_for_wsl(inner_cmd: str) -> str:
     Returns:
         Command string wrapped with wsl -e
     """
-    # Use double quotes because SSH lands in Windows cmd.exe,
-    # which doesn't recognize single quotes as string delimiters.
-    escaped_inner = inner_cmd.replace('"', '\\"')
-    return f'wsl -e zsh -l -i -c "{escaped_inner}"'
-
-
-def _wrap_for_powershell(inner_cmd: str, no_exit: bool = False) -> str:
-    """Wrap a command to run in PowerShell on a Windows remote.
-
-    On Windows remotes, SSH lands in cmd.exe. We launch PowerShell
-    to run commands there instead of WSL.
-
-    Args:
-        inner_cmd: The command string to run inside PowerShell
-        no_exit: Whether to keep PowerShell open after the command
-
-    Returns:
-        Command string wrapped with powershell -Command
-    """
-    escaped_inner = inner_cmd.replace('"', '\\"')
-    no_exit_flag = " -NoExit" if no_exit else ""
-    return f'powershell{no_exit_flag} -Command "{escaped_inner}"'
+    # Use single quotes so PowerShell treats the string as literal
+    # (no $() expansion). Escape inner single quotes by doubling them.
+    escaped_inner = inner_cmd.replace("'", "''")
+    return f"wsl -e zsh -l -i -c '{escaped_inner}'"
 
 
 def _build_remote_cmd_for_path(
@@ -148,14 +132,15 @@ def _build_remote_cmd_for_path(
         Remote command string to pass to SSH
     """
     if remote_shell == Shell.POWERSHELL:
-        # PowerShell: use Windows paths, PowerShell wrapping
+        # SSH lands directly in PowerShell. Send commands without wrapping.
         win_path = wsl_path_to_windows(remote_path)
         parts = [f"cd '{win_path}'"]
         if with_coding_tool:
             parts.append(coding_tool)
-        inner_cmd = "; ".join(parts)
-        # Keep PowerShell open for shell-only, close after coding tool
-        return _wrap_for_powershell(inner_cmd, no_exit=not with_coding_tool)
+        else:
+            # Start nested interactive PowerShell at the target directory
+            parts.append("powershell")
+        return "; ".join(parts)
 
     if remote_shell == Shell.WSL:
         # WSL: wrap entire command in wsl -e
@@ -268,10 +253,10 @@ def connect_to_remote_home(
     console.print(f"Connecting to {user_host}...")
 
     if remote_shell == Shell.POWERSHELL:
-        # PowerShell: interactive session
-        remote_cmd = "powershell -NoExit"
+        # SSH lands in PowerShell already — no command needed for interactive
+        remote_cmd = None
     elif remote_shell == Shell.WSL:
-        # WSL: just enter WSL interactively
+        # SSH lands in PowerShell, enter WSL interactively
         remote_cmd = "wsl -e zsh -l -i"
     else:
         # macOS: unlock keychain and start interactive shell
@@ -284,7 +269,8 @@ def connect_to_remote_home(
 
     # Build SSH command with setup commands
     ssh_cmd = build_ssh_command(ssh_key, user_host)
-    ssh_cmd.append(remote_cmd)
+    if remote_cmd is not None:
+        ssh_cmd.append(remote_cmd)
 
     result = subprocess.run(ssh_cmd)
 

@@ -9,7 +9,6 @@ import pytest
 
 from vibe.connection import (
     _build_remote_cmd_for_path,
-    _wrap_for_powershell,
     _wrap_for_wsl,
     build_remote_setup_commands,
     build_ssh_command,
@@ -148,47 +147,27 @@ class TestWrapForWsl:
     """Tests for _wrap_for_wsl helper function."""
 
     def test_wraps_simple_command(self) -> None:
-        """Should wrap command with wsl -e zsh using double quotes."""
+        """Should wrap command with wsl -e zsh using single quotes."""
         result = _wrap_for_wsl("cd /path && cly")
-        assert result == 'wsl -e zsh -l -i -c "cd /path && cly"'
+        assert result == "wsl -e zsh -l -i -c 'cd /path && cly'"
 
-    def test_escapes_double_quotes(self) -> None:
-        """Should escape double quotes in inner command."""
-        result = _wrap_for_wsl('echo "hello"')
-        assert 'wsl -e zsh -l -i -c "echo \\"hello\\""' == result
+    def test_escapes_single_quotes(self) -> None:
+        """Should escape single quotes by doubling them for PowerShell."""
+        result = _wrap_for_wsl("cd '/mnt/z/my repo' && cly")
+        assert "wsl -e zsh -l -i -c" in result
+        # Single quotes doubled for PowerShell, which produces literal '
+        assert "'cd ''/mnt/z/my repo'' && cly'" in result
 
-    def test_preserves_complex_commands(self) -> None:
-        """Should preserve complex chained commands."""
+    def test_preserves_dollar_subexpressions(self) -> None:
+        """Should preserve $() without PowerShell interpreting it."""
         inner = "cd /mnt/repos/myrepo && export TMPDIR=$(mktemp -d) && cly"
         result = _wrap_for_wsl(inner)
-        assert "wsl -e zsh -l -i -c" in result
+        # Single-quoted string prevents PowerShell from expanding $()
+        assert result.startswith("wsl -e zsh -l -i -c '")
+        assert result.endswith("'")
+        assert "$(mktemp -d)" in result
         assert "cd /mnt/repos/myrepo" in result
-        assert "TMPDIR" in result
         assert "cly" in result
-
-
-class TestWrapForPowershell:
-    """Tests for _wrap_for_powershell helper function."""
-
-    def test_wraps_simple_command(self) -> None:
-        """Should wrap command with powershell -Command."""
-        result = _wrap_for_powershell("cd 'Z:\\repo'; claude")
-        assert result == 'powershell -Command "cd \'Z:\\repo\'; claude"'
-
-    def test_no_exit_flag(self) -> None:
-        """Should include -NoExit when requested."""
-        result = _wrap_for_powershell("cd 'Z:\\repo'", no_exit=True)
-        assert result == 'powershell -NoExit -Command "cd \'Z:\\repo\'"'
-
-    def test_escapes_double_quotes(self) -> None:
-        """Should escape double quotes in inner command."""
-        result = _wrap_for_powershell('echo "hello"')
-        assert 'powershell -Command "echo \\"hello\\""' == result
-
-    def test_no_exit_false_by_default(self) -> None:
-        """Should not include -NoExit by default."""
-        result = _wrap_for_powershell("test")
-        assert "-NoExit" not in result
 
 
 class TestBuildRemoteCmdForPath:
@@ -229,22 +208,18 @@ class TestBuildRemoteCmdForPath:
         assert "exec zsh" in result
 
     def test_powershell_with_coding_tool(self) -> None:
-        """Should build PowerShell command with coding tool."""
+        """Should send commands directly to PowerShell (no wrapping)."""
         result = _build_remote_cmd_for_path(
             Path("/mnt/z/repo"), True, "claude --dangerously-skip-permissions", Shell.POWERSHELL
         )
-        assert "powershell" in result
-        assert "Z:\\repo" in result
-        assert "claude --dangerously-skip-permissions" in result
-        assert "-NoExit" not in result
+        assert result == "cd 'Z:\\repo'; claude --dangerously-skip-permissions"
 
     def test_powershell_without_coding_tool(self) -> None:
-        """Should build PowerShell command with -NoExit for shell."""
+        """Should start nested interactive PowerShell for shell-only."""
         result = _build_remote_cmd_for_path(
             Path("/mnt/z/repo"), False, "cly", Shell.POWERSHELL
         )
-        assert "powershell -NoExit" in result
-        assert "Z:\\repo" in result
+        assert result == "cd 'Z:\\repo'; powershell"
 
 
 class TestConnectToRemote:
@@ -446,7 +421,7 @@ class TestConnectToRemote:
     def test_powershell_with_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should use PowerShell wrapping when remote_shell=POWERSHELL."""
+        """Should send direct PowerShell commands (no wrapping)."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -463,16 +438,14 @@ class TestConnectToRemote:
 
         call_args = mock_run.call_args[0][0]
         remote_cmd = call_args[-1]
-        assert "powershell" in remote_cmd
-        assert "Z:\\_vibecoding\\my-repo\\feature" in remote_cmd
-        assert "claude --dangerously-skip-permissions" in remote_cmd
+        assert remote_cmd == "cd 'Z:\\_vibecoding\\my-repo\\feature'; claude --dangerously-skip-permissions"
 
     @patch("vibe.connection.subprocess.run")
     @patch("vibe.connection.validate_ssh_key")
     def test_powershell_without_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should use PowerShell with -NoExit for shell-only."""
+        """Should start nested interactive PowerShell for shell-only."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -488,8 +461,7 @@ class TestConnectToRemote:
 
         call_args = mock_run.call_args[0][0]
         remote_cmd = call_args[-1]
-        assert "powershell -NoExit" in remote_cmd
-        assert "Z:\\_vibecoding\\my-repo\\feature" in remote_cmd
+        assert remote_cmd == "cd 'Z:\\_vibecoding\\my-repo\\feature'; powershell"
 
 
 class TestConnectToRemoteHome:
@@ -624,10 +596,10 @@ class TestConnectToRemoteHome:
 
     @patch("vibe.connection.subprocess.run")
     @patch("vibe.connection.validate_ssh_key")
-    def test_powershell_enters_powershell(
+    def test_powershell_interactive_no_command(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should enter PowerShell interactively when remote_shell=POWERSHELL."""
+        """Should start interactive SSH session without extra command for PowerShell."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -638,8 +610,8 @@ class TestConnectToRemoteHome:
         )
 
         call_args = mock_run.call_args[0][0]
-        remote_cmd = call_args[-1]
-        assert remote_cmd == "powershell -NoExit"
+        # SSH already lands in PowerShell, so no remote command appended
+        assert call_args == ["ssh", "-i", "/key", "admin@vibecoding", "-t"]
 
 
 class TestConnectLocally:
@@ -839,7 +811,7 @@ class TestConnectToRemotePath:
     def test_powershell_with_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should use PowerShell wrapping when remote_shell=POWERSHELL."""
+        """Should send direct PowerShell commands (no wrapping)."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -854,16 +826,14 @@ class TestConnectToRemotePath:
 
         call_args = mock_run.call_args[0][0]
         remote_cmd = call_args[-1]
-        assert "powershell" in remote_cmd
-        assert "Z:\\my-repo" in remote_cmd
-        assert "claude --dangerously-skip-permissions" in remote_cmd
+        assert remote_cmd == "cd 'Z:\\my-repo'; claude --dangerously-skip-permissions"
 
     @patch("vibe.connection.subprocess.run")
     @patch("vibe.connection.validate_ssh_key")
     def test_powershell_without_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should use PowerShell with -NoExit for shell-only."""
+        """Should start nested interactive PowerShell for shell-only."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -877,5 +847,4 @@ class TestConnectToRemotePath:
 
         call_args = mock_run.call_args[0][0]
         remote_cmd = call_args[-1]
-        assert "powershell -NoExit" in remote_cmd
-        assert "Z:\\my-repo" in remote_cmd
+        assert remote_cmd == "cd 'Z:\\my-repo'; powershell"

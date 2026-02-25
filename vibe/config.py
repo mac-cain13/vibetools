@@ -65,7 +65,7 @@ OPEN_CODE_CMD = "opencode"   # OpenCode (direct invocation)
 
 # Direct coding tool commands (no wrappers — used in PowerShell)
 CLAUDE_CODE_DIRECT_CMD = "claude --dangerously-skip-permissions"
-CODEX_DIRECT_CMD = "codex --full-auto"
+CODEX_DIRECT_CMD = "codex --dangerously-bypass-approvals-and-sandbox"
 OPEN_CODE_DIRECT_CMD = "opencode"
 
 

@@ -28,9 +28,9 @@ if _platform == Platform.MACOS:
     REMOTE_WSL_WRAPPER = False
 
 else:  # WSL
-    # Repository base directories
-    LOCAL_REPO_BASE = Path.home() / "Repositories"
-    REMOTE_REPO_BASE = Path("/mnt/repos")
+    # Repository base directories (/mnt/z is the host's Repositories share)
+    LOCAL_REPO_BASE = Path("/mnt/z")
+    REMOTE_REPO_BASE = Path("/mnt/z")
 
     # SSH configuration
     SSH_USER_HOST = "admin@172.21.0.10"

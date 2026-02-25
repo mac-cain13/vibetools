@@ -6,7 +6,7 @@ from unittest.mock import mock_open, patch
 
 import pytest
 
-from vibe.platform import Platform, detect_platform
+from vibe.platform import Platform, Shell, detect_platform
 
 
 class TestPlatform:
@@ -107,3 +107,15 @@ class TestDetectPlatform:
             with patch("vibe.platform.sys") as mock_sys:
                 mock_sys.platform = "darwin"
                 assert detect_platform() == Platform.MACOS
+
+
+class TestShell:
+    """Tests for Shell enum."""
+
+    def test_wsl_value(self) -> None:
+        """Should have correct value for WSL."""
+        assert Shell.WSL.value == "wsl"
+
+    def test_powershell_value(self) -> None:
+        """Should have correct value for POWERSHELL."""
+        assert Shell.POWERSHELL.value == "powershell"

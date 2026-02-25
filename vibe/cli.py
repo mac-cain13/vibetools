@@ -9,7 +9,17 @@ import typer
 from rich.console import Console
 
 from vibe.cleanup import clean_all_worktrees, clean_specific_worktree
-from vibe.config import CLAUDE_CODE_CMD, CODEX_CMD, LOCAL_WORKTREE_BASE, OPEN_CODE_CMD
+from vibe.config import (
+    CLAUDE_CODE_CMD,
+    CLAUDE_CODE_DIRECT_CMD,
+    CODEX_CMD,
+    CODEX_DIRECT_CMD,
+    DEFAULT_REMOTE_SHELL,
+    LOCAL_WORKTREE_BASE,
+    OPEN_CODE_CMD,
+    OPEN_CODE_DIRECT_CMD,
+    REMOTE_IS_WINDOWS,
+)
 from vibe.connection import (
     connect_locally,
     connect_to_remote,
@@ -29,6 +39,7 @@ from vibe.git_ops import (
     is_git_worktree,
     validate_git_repo,
 )
+from vibe.platform import Shell
 
 
 def complete_branches(incomplete: str) -> List[str]:
@@ -79,8 +90,35 @@ app = typer.Typer(
 console = Console()
 
 
-def prompt_coding_tool_choice() -> str:
+def prompt_shell_choice() -> Shell:
+    """Prompt user to select WSL or PowerShell on Windows targets.
+
+    Returns:
+        The selected Shell enum value.
+    """
+    from simple_term_menu import TerminalMenu
+
+    options = ["WSL", "PowerShell"]
+    shell_map = {
+        0: Shell.WSL,
+        1: Shell.POWERSHELL,
+    }
+
+    console.print("\n[bold]Select remote shell:[/bold]")
+    menu = TerminalMenu(options, cursor_index=0)
+    choice = menu.show()
+
+    if choice is None:
+        raise typer.Abort()
+
+    return shell_map[choice]
+
+
+def prompt_coding_tool_choice(powershell: bool = False) -> str:
     """Prompt user to select a coding tool interactively.
+
+    Args:
+        powershell: Whether to use direct commands (for PowerShell)
 
     Returns:
         The coding tool command to use.
@@ -88,11 +126,18 @@ def prompt_coding_tool_choice() -> str:
     from simple_term_menu import TerminalMenu
 
     options = ["Codex", "OpenCode", "Claude"]
-    tool_map = {
-        0: CODEX_CMD,
-        1: OPEN_CODE_CMD,
-        2: CLAUDE_CODE_CMD,
-    }
+    if powershell:
+        tool_map = {
+            0: CODEX_DIRECT_CMD,
+            1: OPEN_CODE_DIRECT_CMD,
+            2: CLAUDE_CODE_DIRECT_CMD,
+        }
+    else:
+        tool_map = {
+            0: CODEX_CMD,
+            1: OPEN_CODE_CMD,
+            2: CLAUDE_CODE_CMD,
+        }
 
     console.print("\n[bold]Select coding tool:[/bold]")
     menu = TerminalMenu(options, cursor_index=0)
@@ -105,13 +150,19 @@ def prompt_coding_tool_choice() -> str:
     return tool_map[choice]
 
 
-def resolve_coding_tool(oc: bool, codex: bool, claude: bool) -> Optional[str]:
+def resolve_coding_tool(
+    oc: bool,
+    codex: bool,
+    claude: bool,
+    powershell: bool = False,
+) -> Optional[str]:
     """Resolve which coding tool to use based on flags.
 
     Args:
         oc: Whether --oc flag was provided
         codex: Whether --codex flag was provided
         claude: Whether --claude flag was provided
+        powershell: Whether to use direct commands (for PowerShell)
 
     Returns:
         The coding tool command to use, or None if no flag specified.
@@ -121,11 +172,11 @@ def resolve_coding_tool(oc: bool, codex: bool, claude: bool) -> Optional[str]:
         Returns None if no flag is specified (caller should prompt).
     """
     if oc:
-        return OPEN_CODE_CMD
+        return OPEN_CODE_DIRECT_CMD if powershell else OPEN_CODE_CMD
     if codex:
-        return CODEX_CMD
+        return CODEX_DIRECT_CMD if powershell else CODEX_CMD
     if claude:
-        return CLAUDE_CODE_CMD
+        return CLAUDE_CODE_DIRECT_CMD if powershell else CLAUDE_CODE_CMD
     return None  # No flag = interactive prompt
 
 
@@ -195,6 +246,44 @@ def setup_worktree(
     except RuntimeError as e:
         console.print(f"[red]Error:[/] {e}")
         return False
+
+
+def _resolve_remote_shell() -> Shell | None:
+    """Determine the remote shell to use.
+
+    On Windows targets, prompts for WSL or PowerShell.
+    On macOS targets, returns None (direct connection).
+
+    Returns:
+        Shell enum value or None for macOS
+    """
+    if REMOTE_IS_WINDOWS:
+        return prompt_shell_choice()
+    return DEFAULT_REMOTE_SHELL
+
+
+def _resolve_tool_and_shell(
+    oc: bool,
+    codex: bool,
+    claude: bool,
+    remote_shell: Shell | None,
+) -> str:
+    """Resolve the coding tool command, prompting if needed.
+
+    Args:
+        oc: Whether --oc flag was provided
+        codex: Whether --codex flag was provided
+        claude: Whether --claude flag was provided
+        remote_shell: The remote shell being used
+
+    Returns:
+        The coding tool command string
+    """
+    is_powershell = remote_shell == Shell.POWERSHELL
+    coding_tool = resolve_coding_tool(oc, codex, claude, powershell=is_powershell)
+    if coding_tool is None:
+        coding_tool = prompt_coding_tool_choice(powershell=is_powershell)
+    return coding_tool
 
 
 @app.command(
@@ -303,7 +392,8 @@ def main(
     if cli:
         if branch is None:
             # Just SSH to home directory
-            exit_code = connect_to_remote_home()
+            remote_shell = _resolve_remote_shell()
+            exit_code = connect_to_remote_home(remote_shell=remote_shell)
             raise typer.Exit(exit_code)
 
         # SSH with worktree but no coding tool
@@ -322,10 +412,12 @@ def main(
         if not setup_worktree(branch, effective_from, repo_info.name, repo_info.root):
             raise typer.Exit(1)
 
+        remote_shell = _resolve_remote_shell()
         exit_code = connect_to_remote(
             repo_name=repo_info.name,
             worktree_name=branch,
             with_coding_tool=False,
+            remote_shell=remote_shell,
         )
         raise typer.Exit(exit_code)
 
@@ -375,13 +467,13 @@ def main(
                 f"in '{context.repo_name}'..."
             )
 
-        coding_tool = resolve_coding_tool(oc, codex, claude)
-        if coding_tool is None:
-            coding_tool = prompt_coding_tool_choice()
+        remote_shell = _resolve_remote_shell()
+        coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
         exit_code = connect_to_remote_path(
             remote_path=context.remote_path,
             with_coding_tool=True,
             coding_tool=coding_tool,
+            remote_shell=remote_shell,
         )
         raise typer.Exit(exit_code)
 
@@ -398,14 +490,14 @@ def main(
     if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
         raise typer.Exit(1)
 
-    coding_tool = resolve_coding_tool(oc, codex, claude)
-    if coding_tool is None:
-        coding_tool = prompt_coding_tool_choice()
+    remote_shell = _resolve_remote_shell()
+    coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
     exit_code = connect_to_remote(
         repo_name=repo_info.name,
         worktree_name=branch,
         with_coding_tool=True,
         coding_tool=coding_tool,
+        remote_shell=remote_shell,
     )
     raise typer.Exit(exit_code)
 

@@ -14,6 +14,13 @@ class Platform(Enum):
     WSL = "wsl"
 
 
+class Shell(Enum):
+    """Remote shell options for Windows targets."""
+
+    WSL = "wsl"
+    POWERSHELL = "powershell"
+
+
 def detect_platform() -> Platform:
     """Detect the current platform.
 

@@ -8,13 +8,15 @@ from pathlib import Path
 
 from vibe.config import (
     CLAUDE_CODE_CMD,
+    DEFAULT_REMOTE_SHELL,
     KEYCHAIN_COMMAND,
     REMOTE_WORKTREE_BASE,
-    REMOTE_WSL_WRAPPER,
     SSH_KEY_PATH,
     SSH_USER_HOST,
     UNLOCK_KEYCHAIN,
+    wsl_path_to_windows,
 )
+from vibe.platform import Shell
 from vibe.utils import console
 
 # Default timeout for SSH connection attempts (seconds)
@@ -110,6 +112,84 @@ def _wrap_for_wsl(inner_cmd: str) -> str:
     return f'wsl -e zsh -l -i -c "{escaped_inner}"'
 
 
+def _wrap_for_powershell(inner_cmd: str, no_exit: bool = False) -> str:
+    """Wrap a command to run in PowerShell on a Windows remote.
+
+    On Windows remotes, SSH lands in cmd.exe. We launch PowerShell
+    to run commands there instead of WSL.
+
+    Args:
+        inner_cmd: The command string to run inside PowerShell
+        no_exit: Whether to keep PowerShell open after the command
+
+    Returns:
+        Command string wrapped with powershell -Command
+    """
+    escaped_inner = inner_cmd.replace('"', '\\"')
+    no_exit_flag = " -NoExit" if no_exit else ""
+    return f'powershell{no_exit_flag} -Command "{escaped_inner}"'
+
+
+def _build_remote_cmd_for_path(
+    remote_path: Path,
+    with_coding_tool: bool,
+    coding_tool: str,
+    remote_shell: Shell | None,
+) -> str:
+    """Build the remote command string for a given path and shell.
+
+    Args:
+        remote_path: Remote path to cd into
+        with_coding_tool: Whether to start a coding tool or just shell
+        coding_tool: Command to run for the coding tool
+        remote_shell: Shell to use on the remote (None=macOS, WSL, PowerShell)
+
+    Returns:
+        Remote command string to pass to SSH
+    """
+    if remote_shell == Shell.POWERSHELL:
+        # PowerShell: use Windows paths, PowerShell wrapping
+        win_path = wsl_path_to_windows(remote_path)
+        parts = [f"cd '{win_path}'"]
+        if with_coding_tool:
+            parts.append(coding_tool)
+        inner_cmd = "; ".join(parts)
+        # Keep PowerShell open for shell-only, close after coding tool
+        return _wrap_for_powershell(inner_cmd, no_exit=not with_coding_tool)
+
+    if remote_shell == Shell.WSL:
+        # WSL: wrap entire command in wsl -e
+        escaped_path = escape_shell_path(remote_path)
+        inner_parts = [f"cd {escaped_path}", "export TMPDIR=$(mktemp -d)"]
+        if with_coding_tool:
+            inner_parts.append(coding_tool)
+        else:
+            inner_parts.append("exec zsh")
+        inner_cmd = " && ".join(inner_parts)
+        return _wrap_for_wsl(inner_cmd)
+
+    # macOS: direct command execution
+    setup = build_remote_setup_commands(remote_path)
+    if with_coding_tool:
+        escaped_tool = shlex.quote(coding_tool)
+        return f'{setup} && zsh -l -i -c {escaped_tool}'
+    return f"{setup} && zsh -l -i"
+
+
+def _print_ssh_failure(user_host: str, ssh_key: Path) -> None:
+    """Print helpful error messages for SSH connection failures.
+
+    Args:
+        user_host: SSH user@host string
+        ssh_key: Path to SSH private key
+    """
+    console.print()
+    console.print("[red]SSH connection failed.[/] Common causes:")
+    console.print(f"  - Host '{user_host}' is unreachable")
+    console.print(f"  - SSH key '{ssh_key}' is not authorized")
+    console.print("  - Network connectivity issues")
+
+
 def connect_to_remote(
     repo_name: str,
     worktree_name: str,
@@ -118,19 +198,19 @@ def connect_to_remote(
     user_host: str = SSH_USER_HOST,
     remote_base: Path = REMOTE_WORKTREE_BASE,
     coding_tool: str = CLAUDE_CODE_CMD,
-    wsl_wrapper: bool = REMOTE_WSL_WRAPPER,
+    remote_shell: Shell | None = DEFAULT_REMOTE_SHELL,
 ) -> int:
     """Connect to remote machine via SSH.
 
     Args:
         repo_name: Name of the repository
         worktree_name: Name of the worktree
-        with_coding_tool: Whether to start the coding tool (cly) or just shell
+        with_coding_tool: Whether to start the coding tool or just shell
         ssh_key: Path to SSH private key
         user_host: SSH user@host string
         remote_base: Remote base path for worktrees
         coding_tool: Command to run for coding tool
-        wsl_wrapper: Whether to wrap commands with wsl -e
+        remote_shell: Remote shell to use (None=macOS, WSL, PowerShell)
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -146,25 +226,9 @@ def connect_to_remote(
     else:
         console.print(f"Connecting to {user_host} and navigating to worktree...")
 
-    if wsl_wrapper:
-        # WSL: wrap entire command in wsl -e
-        escaped_path = escape_shell_path(remote_path)
-        inner_parts = [f"cd {escaped_path}", "export TMPDIR=$(mktemp -d)"]
-        if with_coding_tool:
-            inner_parts.append(coding_tool)
-        else:
-            # Drop into interactive shell after setup
-            inner_parts.append("exec zsh")
-        inner_cmd = " && ".join(inner_parts)
-        remote_cmd = _wrap_for_wsl(inner_cmd)
-    else:
-        # macOS: direct command execution
-        setup = build_remote_setup_commands(remote_path)
-        if with_coding_tool:
-            escaped_tool = shlex.quote(coding_tool)
-            remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
-        else:
-            remote_cmd = f"{setup} && zsh -l -i"
+    remote_cmd = _build_remote_cmd_for_path(
+        remote_path, with_coding_tool, coding_tool, remote_shell
+    )
 
     # Build and execute SSH command
     ssh_cmd = build_ssh_command(ssh_key, user_host)
@@ -172,13 +236,8 @@ def connect_to_remote(
 
     result = subprocess.run(ssh_cmd)
 
-    # Provide helpful error messages for common SSH failures
     if result.returncode == 255:
-        console.print()
-        console.print("[red]SSH connection failed.[/] Common causes:")
-        console.print(f"  - Host '{user_host}' is unreachable")
-        console.print(f"  - SSH key '{ssh_key}' is not authorized")
-        console.print("  - Network connectivity issues")
+        _print_ssh_failure(user_host, ssh_key)
 
     return result.returncode
 
@@ -188,7 +247,7 @@ def connect_to_remote_home(
     user_host: str = SSH_USER_HOST,
     unlock_keychain: bool = UNLOCK_KEYCHAIN,
     keychain_command: str | None = KEYCHAIN_COMMAND,
-    wsl_wrapper: bool = REMOTE_WSL_WRAPPER,
+    remote_shell: Shell | None = DEFAULT_REMOTE_SHELL,
 ) -> int:
     """Connect to remote machine's home directory via SSH.
 
@@ -197,7 +256,7 @@ def connect_to_remote_home(
         user_host: SSH user@host string
         unlock_keychain: Whether to unlock the macOS keychain
         keychain_command: The keychain unlock command to use
-        wsl_wrapper: Whether to wrap commands with wsl -e
+        remote_shell: Remote shell to use (None=macOS, WSL, PowerShell)
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -208,7 +267,10 @@ def connect_to_remote_home(
 
     console.print(f"Connecting to {user_host}...")
 
-    if wsl_wrapper:
+    if remote_shell == Shell.POWERSHELL:
+        # PowerShell: interactive session
+        remote_cmd = "powershell -NoExit"
+    elif remote_shell == Shell.WSL:
         # WSL: just enter WSL interactively
         remote_cmd = "wsl -e zsh -l -i"
     else:
@@ -226,13 +288,8 @@ def connect_to_remote_home(
 
     result = subprocess.run(ssh_cmd)
 
-    # Provide helpful error messages for common SSH failures
     if result.returncode == 255:
-        console.print()
-        console.print("[red]SSH connection failed.[/] Common causes:")
-        console.print(f"  - Host '{user_host}' is unreachable")
-        console.print(f"  - SSH key '{ssh_key}' is not authorized")
-        console.print("  - Network connectivity issues")
+        _print_ssh_failure(user_host, ssh_key)
 
     return result.returncode
 
@@ -270,7 +327,7 @@ def connect_to_remote_path(
     ssh_key: Path = SSH_KEY_PATH,
     user_host: str = SSH_USER_HOST,
     coding_tool: str = CLAUDE_CODE_CMD,
-    wsl_wrapper: bool = REMOTE_WSL_WRAPPER,
+    remote_shell: Shell | None = DEFAULT_REMOTE_SHELL,
 ) -> int:
     """Connect to a specific remote path via SSH.
 
@@ -282,7 +339,7 @@ def connect_to_remote_path(
         ssh_key: Path to SSH private key
         user_host: SSH user@host string
         coding_tool: Command to run for coding tool
-        wsl_wrapper: Whether to wrap commands with wsl -e
+        remote_shell: Remote shell to use (None=macOS, WSL, PowerShell)
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -296,25 +353,9 @@ def connect_to_remote_path(
     else:
         console.print(f"Connecting to {user_host}...")
 
-    if wsl_wrapper:
-        # WSL: wrap entire command in wsl -e
-        escaped_path = escape_shell_path(remote_path)
-        inner_parts = [f"cd {escaped_path}", "export TMPDIR=$(mktemp -d)"]
-        if with_coding_tool:
-            inner_parts.append(coding_tool)
-        else:
-            # Drop into interactive shell after setup
-            inner_parts.append("exec zsh")
-        inner_cmd = " && ".join(inner_parts)
-        remote_cmd = _wrap_for_wsl(inner_cmd)
-    else:
-        # macOS: direct command execution
-        setup = build_remote_setup_commands(remote_path)
-        if with_coding_tool:
-            escaped_tool = shlex.quote(coding_tool)
-            remote_cmd = f'{setup} && zsh -l -i -c {escaped_tool}'
-        else:
-            remote_cmd = f"{setup} && zsh -l -i"
+    remote_cmd = _build_remote_cmd_for_path(
+        remote_path, with_coding_tool, coding_tool, remote_shell
+    )
 
     # Build and execute SSH command
     ssh_cmd = build_ssh_command(ssh_key, user_host)
@@ -322,12 +363,7 @@ def connect_to_remote_path(
 
     result = subprocess.run(ssh_cmd)
 
-    # Provide helpful error messages for common SSH failures
     if result.returncode == 255:
-        console.print()
-        console.print("[red]SSH connection failed.[/] Common causes:")
-        console.print(f"  - Host '{user_host}' is unreachable")
-        console.print(f"  - SSH key '{ssh_key}' is not authorized")
-        console.print("  - Network connectivity issues")
+        _print_ssh_failure(user_host, ssh_key)
 
     return result.returncode

@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vibe.connection import (
+    _build_remote_cmd_for_path,
+    _wrap_for_powershell,
     _wrap_for_wsl,
     build_remote_setup_commands,
     build_ssh_command,
@@ -18,6 +20,7 @@ from vibe.connection import (
     escape_shell_path,
     validate_ssh_key,
 )
+from vibe.platform import Shell
 
 
 class TestValidateSshKey:
@@ -164,6 +167,86 @@ class TestWrapForWsl:
         assert "cly" in result
 
 
+class TestWrapForPowershell:
+    """Tests for _wrap_for_powershell helper function."""
+
+    def test_wraps_simple_command(self) -> None:
+        """Should wrap command with powershell -Command."""
+        result = _wrap_for_powershell("cd 'Z:\\repo'; claude")
+        assert result == 'powershell -Command "cd \'Z:\\repo\'; claude"'
+
+    def test_no_exit_flag(self) -> None:
+        """Should include -NoExit when requested."""
+        result = _wrap_for_powershell("cd 'Z:\\repo'", no_exit=True)
+        assert result == 'powershell -NoExit -Command "cd \'Z:\\repo\'"'
+
+    def test_escapes_double_quotes(self) -> None:
+        """Should escape double quotes in inner command."""
+        result = _wrap_for_powershell('echo "hello"')
+        assert 'powershell -Command "echo \\"hello\\""' == result
+
+    def test_no_exit_false_by_default(self) -> None:
+        """Should not include -NoExit by default."""
+        result = _wrap_for_powershell("test")
+        assert "-NoExit" not in result
+
+
+class TestBuildRemoteCmdForPath:
+    """Tests for _build_remote_cmd_for_path helper function."""
+
+    def test_macos_with_coding_tool(self) -> None:
+        """Should build macOS command with coding tool."""
+        result = _build_remote_cmd_for_path(
+            Path("/remote/repo"), True, "cly", None
+        )
+        assert "/remote/repo" in result
+        assert "cly" in result
+        assert "zsh -l -i -c" in result
+
+    def test_macos_without_coding_tool(self) -> None:
+        """Should build macOS command with interactive shell."""
+        result = _build_remote_cmd_for_path(
+            Path("/remote/repo"), False, "cly", None
+        )
+        assert "zsh -l -i" in result
+        assert "cly" not in result
+
+    def test_wsl_with_coding_tool(self) -> None:
+        """Should build WSL-wrapped command with coding tool."""
+        result = _build_remote_cmd_for_path(
+            Path("/mnt/z/repo"), True, "cly", Shell.WSL
+        )
+        assert result.startswith("wsl -e zsh -l -i -c")
+        assert "/mnt/z/repo" in result
+        assert "cly" in result
+
+    def test_wsl_without_coding_tool(self) -> None:
+        """Should build WSL-wrapped command with exec zsh."""
+        result = _build_remote_cmd_for_path(
+            Path("/mnt/z/repo"), False, "cly", Shell.WSL
+        )
+        assert result.startswith("wsl -e zsh -l -i -c")
+        assert "exec zsh" in result
+
+    def test_powershell_with_coding_tool(self) -> None:
+        """Should build PowerShell command with coding tool."""
+        result = _build_remote_cmd_for_path(
+            Path("/mnt/z/repo"), True, "claude --dangerously-skip-permissions", Shell.POWERSHELL
+        )
+        assert "powershell" in result
+        assert "Z:\\repo" in result
+        assert "claude --dangerously-skip-permissions" in result
+        assert "-NoExit" not in result
+
+    def test_powershell_without_coding_tool(self) -> None:
+        """Should build PowerShell command with -NoExit for shell."""
+        result = _build_remote_cmd_for_path(
+            Path("/mnt/z/repo"), False, "cly", Shell.POWERSHELL
+        )
+        assert "powershell -NoExit" in result
+        assert "Z:\\repo" in result
+
+
 class TestConnectToRemote:
     """Tests for connect_to_remote function."""
 
@@ -295,7 +378,7 @@ class TestConnectToRemote:
             user_host="admin@vibecoding",
             remote_base=Path("/mnt/repos/_vibecoding"),
             coding_tool="cly",
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -311,7 +394,7 @@ class TestConnectToRemote:
     def test_wsl_wrapper_without_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should wrap shell-only command with wsl -e when wsl_wrapper=True."""
+        """Should wrap shell-only command with wsl -e when remote_shell=WSL."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -322,7 +405,7 @@ class TestConnectToRemote:
             ssh_key=Path("/key"),
             user_host="admin@vibecoding",
             remote_base=Path("/mnt/repos/_vibecoding"),
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -350,13 +433,63 @@ class TestConnectToRemote:
             ssh_key=Path("/key"),
             user_host="admin@vibecoding",
             remote_base=Path("/mnt/repos/_vibecoding"),
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
         remote_cmd = call_args[-1]
         assert "security" not in remote_cmd
         assert "keychain" not in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_powershell_with_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should use PowerShell wrapping when remote_shell=POWERSHELL."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote(
+            repo_name="my-repo",
+            worktree_name="feature",
+            with_coding_tool=True,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_base=Path("/mnt/z/_vibecoding"),
+            coding_tool="claude --dangerously-skip-permissions",
+            remote_shell=Shell.POWERSHELL,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "powershell" in remote_cmd
+        assert "Z:\\_vibecoding\\my-repo\\feature" in remote_cmd
+        assert "claude --dangerously-skip-permissions" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_powershell_without_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should use PowerShell with -NoExit for shell-only."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote(
+            repo_name="my-repo",
+            worktree_name="feature",
+            with_coding_tool=False,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_base=Path("/mnt/z/_vibecoding"),
+            remote_shell=Shell.POWERSHELL,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "powershell -NoExit" in remote_cmd
+        assert "Z:\\_vibecoding\\my-repo\\feature" in remote_cmd
 
 
 class TestConnectToRemoteHome:
@@ -430,14 +563,14 @@ class TestConnectToRemoteHome:
     def test_wsl_wrapper_enters_wsl(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should enter WSL interactively when wsl_wrapper=True."""
+        """Should enter WSL interactively when remote_shell=WSL."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
         connect_to_remote_home(
             ssh_key=Path("/key"),
             user_host="admin@vibecoding",
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -458,7 +591,7 @@ class TestConnectToRemoteHome:
             user_host="admin@vibecoding",
             unlock_keychain=False,
             keychain_command=None,
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -480,7 +613,7 @@ class TestConnectToRemoteHome:
             user_host="user@host",
             unlock_keychain=False,
             keychain_command=None,
-            wsl_wrapper=False,
+            remote_shell=None,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -488,6 +621,25 @@ class TestConnectToRemoteHome:
         assert "security" not in remote_cmd
         assert "TMPDIR" in remote_cmd
         assert "zsh -l -i" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_powershell_enters_powershell(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should enter PowerShell interactively when remote_shell=POWERSHELL."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_home(
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_shell=Shell.POWERSHELL,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert remote_cmd == "powershell -NoExit"
 
 
 class TestConnectLocally:
@@ -637,7 +789,7 @@ class TestConnectToRemotePath:
     def test_wsl_wrapper_with_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should wrap command with wsl -e when wsl_wrapper=True."""
+        """Should wrap command with wsl -e when remote_shell=WSL."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -647,7 +799,7 @@ class TestConnectToRemotePath:
             ssh_key=Path("/key"),
             user_host="admin@vibecoding",
             coding_tool="cly",
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -661,7 +813,7 @@ class TestConnectToRemotePath:
     def test_wsl_wrapper_without_coding_tool(
         self, mock_validate: MagicMock, mock_run: MagicMock
     ) -> None:
-        """Should wrap shell-only command with wsl -e when wsl_wrapper=True."""
+        """Should wrap shell-only command with wsl -e when remote_shell=WSL."""
         mock_validate.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -670,7 +822,7 @@ class TestConnectToRemotePath:
             with_coding_tool=False,
             ssh_key=Path("/key"),
             user_host="admin@vibecoding",
-            wsl_wrapper=True,
+            remote_shell=Shell.WSL,
         )
 
         call_args = mock_run.call_args[0][0]
@@ -681,3 +833,49 @@ class TestConnectToRemotePath:
         assert "exec zsh" in remote_cmd
         # Should NOT have coding tool
         assert "cly" not in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_powershell_with_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should use PowerShell wrapping when remote_shell=POWERSHELL."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_path(
+            remote_path=Path("/mnt/z/my-repo"),
+            with_coding_tool=True,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            coding_tool="claude --dangerously-skip-permissions",
+            remote_shell=Shell.POWERSHELL,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "powershell" in remote_cmd
+        assert "Z:\\my-repo" in remote_cmd
+        assert "claude --dangerously-skip-permissions" in remote_cmd
+
+    @patch("vibe.connection.subprocess.run")
+    @patch("vibe.connection.validate_ssh_key")
+    def test_powershell_without_coding_tool(
+        self, mock_validate: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """Should use PowerShell with -NoExit for shell-only."""
+        mock_validate.return_value = True
+        mock_run.return_value = MagicMock(returncode=0)
+
+        connect_to_remote_path(
+            remote_path=Path("/mnt/z/my-repo"),
+            with_coding_tool=False,
+            ssh_key=Path("/key"),
+            user_host="admin@vibecoding",
+            remote_shell=Shell.POWERSHELL,
+        )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "powershell -NoExit" in remote_cmd
+        assert "Z:\\my-repo" in remote_cmd

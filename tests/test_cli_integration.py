@@ -132,6 +132,7 @@ class TestCliCommand:
             repo_name="test-repo",
             worktree_name="feature-branch",
             with_coding_tool=False,
+            remote_shell=None,
         )
 
 
@@ -222,6 +223,7 @@ class TestDefaultCommand:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cly",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -418,6 +420,7 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="opencode",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -445,6 +448,7 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cdx",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -472,6 +476,7 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cly",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.connect_locally")
@@ -578,6 +583,7 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cdx",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.prompt_coding_tool_choice")
@@ -649,6 +655,7 @@ class TestNoArgBehavior:
             remote_path=Path("/Volumes/External/Repositories/my-repo"),
             with_coding_tool=True,
             coding_tool="cly",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.connect_to_remote_path")
@@ -676,6 +683,7 @@ class TestNoArgBehavior:
             remote_path=Path("/Volumes/External/Repositories/_vibecoding/my-repo/feature"),
             with_coding_tool=True,
             coding_tool="cly",
+            remote_shell=None,
         )
 
     @patch("vibe.cli.get_current_context")
@@ -696,3 +704,126 @@ class TestNoArgBehavior:
 
         assert result.exit_code == 1
         assert "not in the expected location" in result.stdout
+
+
+class TestShellChoice:
+    """Tests for WSL/PowerShell shell choice on Windows targets."""
+
+    @patch("vibe.cli.REMOTE_IS_WINDOWS", True)
+    @patch("vibe.cli.prompt_shell_choice")
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_windows_prompts_shell_choice(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_shell_prompt: MagicMock,
+    ) -> None:
+        """Should prompt for shell choice on Windows targets."""
+        from vibe.platform import Shell
+
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+        mock_shell_prompt.return_value = Shell.WSL
+
+        result = runner.invoke(app, ["feature-branch", "--claude"])
+
+        assert result.exit_code == 0
+        mock_shell_prompt.assert_called_once()
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="cly",
+            remote_shell=Shell.WSL,
+        )
+
+    @patch("vibe.cli.REMOTE_IS_WINDOWS", True)
+    @patch("vibe.cli.prompt_shell_choice")
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_powershell_uses_direct_commands(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_shell_prompt: MagicMock,
+    ) -> None:
+        """Should use direct claude command when PowerShell is selected."""
+        from vibe.platform import Shell
+
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+        mock_shell_prompt.return_value = Shell.POWERSHELL
+
+        result = runner.invoke(app, ["feature-branch", "--claude"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="claude --dangerously-skip-permissions",
+            remote_shell=Shell.POWERSHELL,
+        )
+
+    @patch("vibe.cli.REMOTE_IS_WINDOWS", False)
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_macos_skips_shell_choice(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should not prompt for shell choice on macOS."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["feature-branch", "--claude"])
+
+        assert result.exit_code == 0
+        # Should not have prompted — just connected directly
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="cly",
+            remote_shell=None,
+        )
+
+    @patch("vibe.cli.REMOTE_IS_WINDOWS", True)
+    @patch("vibe.cli.prompt_shell_choice")
+    @patch("vibe.cli.connect_to_remote_home")
+    def test_cli_home_with_shell_choice(
+        self,
+        mock_connect: MagicMock,
+        mock_shell_prompt: MagicMock,
+    ) -> None:
+        """Should pass shell choice to connect_to_remote_home."""
+        from vibe.platform import Shell
+
+        mock_connect.return_value = 0
+        mock_shell_prompt.return_value = Shell.POWERSHELL
+
+        result = runner.invoke(app, ["--cli"])
+
+        assert result.exit_code == 0
+        mock_shell_prompt.assert_called_once()
+        mock_connect.assert_called_once_with(remote_shell=Shell.POWERSHELL)

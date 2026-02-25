@@ -145,15 +145,14 @@ class TestWrapForWsl:
     """Tests for _wrap_for_wsl helper function."""
 
     def test_wraps_simple_command(self) -> None:
-        """Should wrap command with wsl -e zsh."""
+        """Should wrap command with wsl -e zsh using double quotes."""
         result = _wrap_for_wsl("cd /path && cly")
-        assert result == "wsl -e zsh -l -i -c 'cd /path && cly'"
+        assert result == 'wsl -e zsh -l -i -c "cd /path && cly"'
 
-    def test_escapes_single_quotes(self) -> None:
-        """Should escape single quotes in inner command."""
-        result = _wrap_for_wsl("cd '/path with spaces'")
-        assert "wsl -e zsh -l -i -c" in result
-        assert "/path with spaces" in result
+    def test_escapes_double_quotes(self) -> None:
+        """Should escape double quotes in inner command."""
+        result = _wrap_for_wsl('echo "hello"')
+        assert 'wsl -e zsh -l -i -c "echo \\"hello\\""' == result
 
     def test_preserves_complex_commands(self) -> None:
         """Should preserve complex chained commands."""

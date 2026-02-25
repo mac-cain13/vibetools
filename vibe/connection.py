@@ -104,9 +104,10 @@ def _wrap_for_wsl(inner_cmd: str) -> str:
     Returns:
         Command string wrapped with wsl -e
     """
-    # Escape single quotes in the inner command for the outer shell
-    escaped_inner = inner_cmd.replace("'", "'\\''")
-    return f"wsl -e zsh -l -i -c '{escaped_inner}'"
+    # Use double quotes because SSH lands in Windows cmd.exe,
+    # which doesn't recognize single quotes as string delimiters.
+    escaped_inner = inner_cmd.replace('"', '\\"')
+    return f'wsl -e zsh -l -i -c "{escaped_inner}"'
 
 
 def connect_to_remote(

@@ -677,6 +677,44 @@ class TestConnectLocally:
 
         assert result == 1
 
+    @patch("vibe.connection.subprocess.run")
+    def test_splits_tool_command_with_args(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Should split the tool command into an argv list."""
+        mock_run.return_value = MagicMock(returncode=0)
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+
+        connect_locally(
+            worktree_path=worktree_path,
+            coding_tool="cly --resume abc-123",
+        )
+
+        mock_run.assert_called_once_with(
+            ["cly", "--resume", "abc-123"], cwd=worktree_path
+        )
+
+    @patch("vibe.connection.subprocess.run")
+    def test_splits_quoted_prompt_into_single_argument(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Should keep a shell-quoted prompt as one argv element."""
+        mock_run.return_value = MagicMock(returncode=0)
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        prompt = (
+            "Read parked ticket vibe-12 via the park skill "
+            "and continue from its next step."
+        )
+
+        connect_locally(
+            worktree_path=worktree_path,
+            coding_tool=f"cly '{prompt}'",
+        )
+
+        mock_run.assert_called_once_with(["cly", prompt], cwd=worktree_path)
+
 
 class TestConnectToRemotePath:
     """Tests for connect_to_remote_path function."""

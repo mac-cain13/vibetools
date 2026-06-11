@@ -616,6 +616,145 @@ class TestCodingToolOptions:
         )
 
 
+class TestSlashedBranchNames:
+    """Tests for branch names containing '/' (encoded directory mapping)."""
+
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_complete_worktrees_offers_decoded_branch_names(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Should offer decoded branch names as completions."""
+        from vibe.cli import complete_worktrees
+
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+
+        repo_worktrees = tmp_path / "test-repo"
+        repo_worktrees.mkdir()
+        (repo_worktrees / "feature%2Fretry-upload").mkdir()
+        (repo_worktrees / "main").mkdir()
+
+        with patch("vibe.cli.LOCAL_WORKTREE_BASE", tmp_path):
+            completions = complete_worktrees("")
+
+        assert sorted(completions) == ["feature/retry-upload", "main"]
+
+        with patch("vibe.cli.LOCAL_WORKTREE_BASE", tmp_path):
+            completions = complete_worktrees("feature/")
+
+        assert completions == ["feature/retry-upload"]
+
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_default_flow_encodes_remote_worktree_name(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should pass the real branch to setup but the encoded dirname to remote."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["feature/retry-upload", "--claude"])
+
+        assert result.exit_code == 0
+        mock_setup.assert_called_once_with(
+            "feature/retry-upload", None, "test-repo", Path("/repo")
+        )
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature%2Fretry-upload",
+            with_coding_tool=True,
+            coding_tool="cly",
+            remote_shell=None,
+        )
+
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_cli_flow_encodes_remote_worktree_name(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should pass the encoded dirname to remote for --cli with slashed branch."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--cli", "feature/retry-upload"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature%2Fretry-upload",
+            with_coding_tool=False,
+            remote_shell=None,
+        )
+
+    @patch("vibe.cli.connect_locally")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
+    def test_local_flow_uses_encoded_worktree_path(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """Should connect locally to the encoded on-disk worktree path."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--local", "feature/retry-upload", "--claude"])
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            Path("/worktrees/test-repo/feature%2Fretry-upload"), coding_tool="cly"
+        )
+
+    @patch("vibe.cli.clean_specific_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_clean_passes_real_branch_name(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_clean: MagicMock,
+    ) -> None:
+        """Should pass the real (decoded) branch name to clean_specific_worktree."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_clean.return_value = True
+
+        result = runner.invoke(app, ["--clean", "feature/retry-upload"])
+
+        assert result.exit_code == 0
+        mock_clean.assert_called_once_with(
+            worktree_name="feature/retry-upload",
+            repo_name="test-repo",
+            repo_root=Path("/repo"),
+        )
+
+
 class TestNoArgBehavior:
     """Tests for no-argument context-aware behavior."""
 
@@ -827,3 +966,156 @@ class TestShellChoice:
         assert result.exit_code == 0
         mock_shell_prompt.assert_called_once()
         mock_connect.assert_called_once_with(remote_shell=Shell.POWERSHELL)
+
+
+class TestPostSessionCleanupWiring:
+    """Tests that every worktree-session exit path runs post-session cleanup."""
+
+    @patch("vibe.cli.post_session_cleanup")
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_default_flow_runs_cleanup(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        """Should run post-session cleanup after the default flow exits."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["feature-branch", "--claude"])
+
+        assert result.exit_code == 0
+        mock_cleanup.assert_called_once()
+        assert mock_cleanup.call_args.args[:3] == (
+            "test-repo",
+            "feature-branch",
+            Path("/repo"),
+        )
+
+    @patch("vibe.cli.post_session_cleanup")
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_cli_flow_runs_cleanup(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        """Should run post-session cleanup after a --cli worktree session."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--cli", "feature-branch"])
+
+        assert result.exit_code == 0
+        mock_cleanup.assert_called_once()
+        assert mock_cleanup.call_args.args[:3] == (
+            "test-repo",
+            "feature-branch",
+            Path("/repo"),
+        )
+
+    @patch("vibe.cli.post_session_cleanup")
+    @patch("vibe.cli.connect_locally")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
+    def test_local_flow_runs_cleanup(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        """Should run post-session cleanup after a --local worktree session."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--local", "feature-branch", "--claude"])
+
+        assert result.exit_code == 0
+        mock_cleanup.assert_called_once()
+        assert mock_cleanup.call_args.args[:3] == (
+            "test-repo",
+            "feature-branch",
+            Path("/repo"),
+        )
+
+    @patch("vibe.cli.post_session_cleanup")
+    @patch("vibe.cli.connect_to_remote_path")
+    @patch("vibe.cli.get_current_context")
+    @patch("vibe.cli.LOCAL_REPO_BASE", Path("/repos"))
+    def test_no_arg_worktree_flow_runs_cleanup_with_decoded_branch(
+        self,
+        mock_context: MagicMock,
+        mock_connect: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        """Should decode the branch from the context for cleanup."""
+        from vibe.git_ops import ContextType, CurrentContext
+
+        worktree = Path(
+            "/repos/_vibecoding/my-repo/feature%2Fretry-upload"
+        )
+        mock_context.return_value = CurrentContext(
+            context_type=ContextType.WORKTREE,
+            local_path=worktree,
+            remote_path=worktree,
+            repo_name="my-repo",
+            worktree_name="feature%2Fretry-upload",
+            branch="feature/retry-upload",
+        )
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--claude"])
+
+        assert result.exit_code == 0
+        mock_cleanup.assert_called_once()
+        assert mock_cleanup.call_args.args[:3] == (
+            "my-repo",
+            "feature/retry-upload",
+            Path("/repos/my-repo"),
+        )
+
+    @patch("vibe.cli.post_session_cleanup")
+    @patch("vibe.cli.connect_to_remote_path")
+    @patch("vibe.cli.get_current_context")
+    def test_no_arg_main_repo_flow_skips_cleanup(
+        self,
+        mock_context: MagicMock,
+        mock_connect: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        """Should not run worktree cleanup for main-checkout sessions."""
+        from vibe.git_ops import ContextType, CurrentContext
+
+        mock_context.return_value = CurrentContext(
+            context_type=ContextType.MAIN_REPO,
+            local_path=Path("/Volumes/External/Repositories/my-repo"),
+            remote_path=Path("/Volumes/External/Repositories/my-repo"),
+            repo_name="my-repo",
+        )
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["--claude"])
+
+        assert result.exit_code == 0
+        mock_cleanup.assert_not_called()

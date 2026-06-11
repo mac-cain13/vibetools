@@ -4,7 +4,7 @@
 
 # Codex wrapper with custom terminal title
 cdx() {
-    local folder=${PWD:t}  # Just the current folder name
+    local folder=$(_vibe_title_name "${PWD:t}")  # decoded current folder name
 
     # Set title to show we're running Codex
     _set_title "$folder — Codex"
@@ -28,7 +28,7 @@ cdx() {
     wait $title_pid 2>/dev/null  # Clean up zombie process
 
     # Restore normal title
-    _set_title "%~"
+    _set_title "${PWD/#$HOME/~}"
 
     # Return the original exit code
     return $exit_code

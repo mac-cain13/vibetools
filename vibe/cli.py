@@ -2,23 +2,35 @@
 
 from __future__ import annotations
 
+import shlex
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
-from vibe.cleanup import clean_all_worktrees, clean_specific_worktree
+from vibe.cleanup import (
+    clean_all_worktrees,
+    clean_specific_worktree,
+    post_session_cleanup,
+    prune_resumed_archive,
+)
 from vibe.config import (
     CLAUDE_CODE_CMD,
     CLAUDE_CODE_DIRECT_CMD,
     CODEX_CMD,
     CODEX_DIRECT_CMD,
     DEFAULT_REMOTE_SHELL,
+    LOCAL_REPO_BASE,
     LOCAL_WORKTREE_BASE,
     OPEN_CODE_CMD,
     OPEN_CODE_DIRECT_CMD,
     REMOTE_IS_WINDOWS,
+    REMOTE_REPO_BASE,
+    VIBEBOARD_DIR,
 )
 from vibe.connection import (
     connect_locally,
@@ -30,16 +42,46 @@ from vibe.git_ops import (
     ContextType,
     CurrentContext,
     WorktreeStatus,
+    branch_exists_local,
+    branch_exists_remote,
+    branch_to_worktree_dirname,
     check_worktree_exists,
     create_worktree,
+    find_branch_checkout,
     get_current_context,
+    get_default_branch,
     get_local_branches,
     get_remote_branches,
     get_repo_info,
+    get_tip_commit_subject,
+    has_uncommitted_changes,
     is_git_worktree,
+    prune_worktrees,
+    switch_checkout_to_branch,
+    unwind_park_commit,
     validate_git_repo,
+    worktree_dirname_to_branch,
+    worktree_path_for_branch,
 )
 from vibe.platform import Shell
+from vibe.tickets import (
+    Ticket,
+    archive_resumed_ticket,
+    find_resumed_ticket,
+    find_ticket,
+    is_safe_session_id,
+    is_safe_ticket_id,
+    list_tickets,
+)
+
+# Fixed bootstrap prompt used to seed a fresh Claude session on resume
+# (vibeboard-format.md section 8): no apostrophes, no freeform text, safe
+# through shell quoting. The ticket id is embedded only after it passes
+# is_safe_ticket_id.
+RESUME_BOOTSTRAP_PROMPT = (
+    "Read parked ticket {ticket_id} via the park skill "
+    "and continue from its next step."
+)
 
 
 def complete_branches(incomplete: str) -> List[str]:
@@ -59,13 +101,16 @@ def complete_branches(incomplete: str) -> List[str]:
 
 
 def complete_worktrees(incomplete: str) -> List[str]:
-    """Provide worktree name completions for --clean.
+    """Provide worktree branch name completions for --clean.
+
+    Directory names on disk are encoded; completions offer the decoded
+    branch names.
 
     Args:
-        incomplete: The partial worktree name typed so far
+        incomplete: The partial branch name typed so far
 
     Returns:
-        List of matching worktree names in current repo
+        List of matching branch names for worktrees in current repo
     """
     if not validate_git_repo():
         return []
@@ -76,10 +121,34 @@ def complete_worktrees(incomplete: str) -> List[str]:
         if not repo_worktrees.exists():
             return []
 
-        worktrees = [d.name for d in repo_worktrees.iterdir() if d.is_dir()]
-        return [w for w in worktrees if w.startswith(incomplete)]
+        branches = [
+            worktree_dirname_to_branch(d.name)
+            for d in repo_worktrees.iterdir()
+            if d.is_dir()
+        ]
+        return [b for b in branches if b.startswith(incomplete)]
     except Exception:
         return []
+
+
+def complete_ticket_ids(incomplete: str) -> List[str]:
+    """Provide ticket id completions for 'vibe resume <ticket>'.
+
+    Args:
+        incomplete: The partial ticket id typed so far
+
+    Returns:
+        List of matching ticket ids from the Vibe Board store
+    """
+    try:
+        return [
+            ticket.id
+            for ticket in list_tickets(VIBEBOARD_DIR)
+            if ticket.id.startswith(incomplete)
+        ]
+    except Exception:
+        return []
+
 
 app = typer.Typer(
     name="vibe",
@@ -189,7 +258,8 @@ def setup_worktree(
     """Set up a worktree, handling existence checks and creation.
 
     Args:
-        worktree_name: Name of the worktree/branch
+        worktree_name: Branch name for the worktree (the on-disk directory
+            name is the encoded form)
         from_branch: Optional base branch to create from
         repo_name: Name of the repository
         cwd: Current working directory
@@ -197,6 +267,9 @@ def setup_worktree(
     Returns:
         True if worktree is ready to use, False on error
     """
+    worktree_path = worktree_path_for_branch(
+        repo_name, worktree_name, LOCAL_WORKTREE_BASE
+    )
     status = check_worktree_exists(
         worktree_name=worktree_name,
         repo_name=repo_name,
@@ -207,7 +280,7 @@ def setup_worktree(
     if status == WorktreeStatus.EXISTS_INVALID:
         console.print(
             f"[red]Error:[/] Directory exists at "
-            f"{LOCAL_WORKTREE_BASE / repo_name / worktree_name} "
+            f"{worktree_path} "
             f"but is not a git worktree"
         )
         console.print("Please remove the directory or choose a different name")
@@ -215,8 +288,7 @@ def setup_worktree(
 
     if status == WorktreeStatus.EXISTS_VALID:
         console.print(
-            f"Worktree directory already exists at: "
-            f"{LOCAL_WORKTREE_BASE / repo_name / worktree_name}"
+            f"Worktree directory already exists at: {worktree_path}"
         )
         console.print("Directory is already a valid worktree")
 
@@ -286,6 +358,645 @@ def _resolve_tool_and_shell(
     return coding_tool
 
 
+def _run_post_session_cleanup(
+    repo_name: str,
+    branch: str,
+    repo_root: Path,
+) -> None:
+    """Run post-session worktree cleanup for a worktree-backed session.
+
+    Called after every worktree session exits: if the session's ticket was
+    parked ('on_hold') during the session, the worktree is removed.
+
+    Args:
+        repo_name: Name of the repository
+        branch: Real branch name of the session's worktree
+        repo_root: Path to the main repository root
+    """
+    post_session_cleanup(
+        repo_name,
+        branch,
+        repo_root,
+        worktree_base=LOCAL_WORKTREE_BASE,
+        store_dir=VIBEBOARD_DIR,
+    )
+
+
+def _print_available_tickets() -> None:
+    """Print the ids of all tickets in the Vibe Board store."""
+    tickets = list_tickets(VIBEBOARD_DIR)
+    if not tickets:
+        console.print(f"[dim]No tickets found in {VIBEBOARD_DIR}[/dim]")
+        return
+
+    console.print("Available tickets:")
+    for ticket in tickets:
+        # Ids and titles come from hand-editable files: escape them so
+        # bracketed text is never interpreted as Rich markup
+        console.print(
+            f"  {escape(ticket.id)}  [dim]({ticket.state})[/dim] "
+            f"{escape(ticket.title)}"
+        )
+
+
+def _resolve_resume_tool(
+    oc: bool,
+    codex: bool,
+    claude: bool,
+    ticket_tool: Optional[str],
+    powershell: bool,
+) -> tuple[Optional[str], str]:
+    """Resolve the coding tool for a resume launch.
+
+    CLI flags take precedence over the ticket's recorded tool; when neither
+    is available the user is prompted interactively.
+
+    Args:
+        oc: Whether --oc flag was provided
+        codex: Whether --codex flag was provided
+        claude: Whether --claude flag was provided
+        ticket_tool: The ticket's recorded tool (claude|codex|opencode|None)
+        powershell: Whether to use direct commands (for PowerShell)
+
+    Returns:
+        Tuple of (tool name or None when unknown, base command string)
+    """
+    tool_commands = {
+        "claude": CLAUDE_CODE_DIRECT_CMD if powershell else CLAUDE_CODE_CMD,
+        "codex": CODEX_DIRECT_CMD if powershell else CODEX_CMD,
+        "opencode": OPEN_CODE_DIRECT_CMD if powershell else OPEN_CODE_CMD,
+    }
+
+    if claude:
+        return "claude", tool_commands["claude"]
+    if codex:
+        return "codex", tool_commands["codex"]
+    if oc:
+        return "opencode", tool_commands["opencode"]
+    if ticket_tool in tool_commands:
+        return ticket_tool, tool_commands[ticket_tool]
+
+    command = prompt_coding_tool_choice(powershell=powershell)
+    for name, tool_command in tool_commands.items():
+        if tool_command == command:
+            return name, command
+    return None, command
+
+
+def _build_resume_command(
+    base_cmd: str,
+    tool_name: Optional[str],
+    ticket: Ticket,
+    powershell: bool,
+    use_session: bool = True,
+) -> tuple[str, bool]:
+    """Build the coding tool command string for a resume launch.
+
+    Claude resumes its recorded session via --resume when the ticket
+    carries a safe session id; otherwise a fresh Claude session is seeded
+    with the fixed bootstrap prompt. Non-Claude tools always launch fresh
+    with no arguments (no session restore, no bootstrap prompt —
+    vibeboard-format.md section 4).
+
+    Args:
+        base_cmd: Base coding tool command
+        tool_name: Resolved tool name (claude|codex|opencode|None)
+        ticket: The ticket being resumed
+        powershell: Whether the remote shell is PowerShell
+        use_session: Whether to attempt resuming the recorded session
+
+    Returns:
+        Tuple of (command string, True when the command resumes a session)
+    """
+    if powershell:
+        # Windows quoting / PowerShell arg-threading is explicitly out of
+        # scope for v1: launch the direct command with no appended
+        # arguments.
+        return base_cmd, False
+
+    if tool_name != "claude":
+        return base_cmd, False
+
+    session_id = ticket.session_id
+    if use_session and session_id is not None and is_safe_session_id(session_id):
+        return f"{base_cmd} --resume {session_id}", True
+
+    if is_safe_ticket_id(ticket.id):
+        prompt = RESUME_BOOTSTRAP_PROMPT.format(ticket_id=ticket.id)
+        return f"{base_cmd} {shlex.quote(prompt)}", False
+
+    return base_cmd, False
+
+
+def _launch_resume(
+    ticket: Ticket,
+    tool_name: Optional[str],
+    base_cmd: str,
+    powershell: bool,
+    launch: Callable[[str], int],
+) -> int:
+    """Launch the coding tool for a resume, degrading on stale sessions.
+
+    When a Claude session resume exits non-zero, the recorded session id
+    may be stale; the user is offered a single fresh relaunch seeded with
+    the bootstrap prompt (vibeboard-format.md section 8).
+
+    Args:
+        ticket: The ticket being resumed
+        tool_name: Resolved tool name (claude|codex|opencode|None)
+        base_cmd: Base coding tool command
+        powershell: Whether the remote shell is PowerShell
+        launch: Callable that runs a tool command and returns its exit code
+
+    Returns:
+        Exit code of the (re)launched session
+    """
+    command, used_resume = _build_resume_command(
+        base_cmd, tool_name, ticket, powershell
+    )
+    exit_code = launch(command)
+
+    if used_resume and exit_code != 0:
+        console.print(
+            f"[yellow]Warning:[/] Resuming session '{ticket.session_id}' "
+            f"exited with code {exit_code}; the recorded session id may "
+            "be stale."
+        )
+        if typer.confirm("Relaunch with a fresh session?", default=True):
+            command, _ = _build_resume_command(
+                base_cmd, tool_name, ticket, powershell, use_session=False
+            )
+            exit_code = launch(command)
+
+    return exit_code
+
+
+def _unwind_if_park_marker(worktree_path: Path, ticket_id: str) -> None:
+    """Unwind a park commit when — and only when — the tip is the marker.
+
+    The tip commit subject must equal exactly 'wip: park <ticket_id>'
+    (whitespace-trimmed) for this ticket; any other tip (including another
+    ticket's park marker) is never unwound. The unwind is a mixed
+    'git reset HEAD~1' restoring park-time working-tree state.
+
+    Args:
+        worktree_path: Path to the worktree to inspect
+        ticket_id: Id of the ticket being resumed
+    """
+    subject = get_tip_commit_subject(worktree_path)
+    if subject is None or subject.strip() != f"wip: park {ticket_id}":
+        return
+
+    console.print(f"Unwinding park commit 'wip: park {ticket_id}'...")
+    if not unwind_park_commit(worktree_path):
+        console.print(
+            "[yellow]Warning:[/] Failed to unwind the park commit; "
+            "continuing with the worktree as-is"
+        )
+
+
+@dataclass
+class ResumeTarget:
+    """Where a resumed session should run.
+
+    Attributes:
+        path: Directory to unwind in and launch the tool from.
+        is_worktree: True when ``path`` is a managed worktree (set the
+            ticket's worktree field and run post-session cleanup after);
+            False when resuming in place on the repo's main checkout.
+    """
+
+    path: Path
+    is_worktree: bool
+
+
+class StrandedBranchChoice(Enum):
+    """User's choice when a ticket's branch is stranded on the main checkout."""
+
+    SWITCH = "switch"  # move the main checkout off the branch, create a worktree
+    IN_PLACE = "in_place"  # resume in the main checkout as it stands
+    ABORT = "abort"  # do nothing
+
+
+def prompt_stranded_branch_choice(
+    branch: str,
+    target_branch: str,
+    main_dirty: bool,
+) -> StrandedBranchChoice:
+    """Prompt for how to recover a branch stranded on the main checkout.
+
+    When the main checkout is clean the default (and recommended) action is
+    to switch it back to ``target_branch`` and create a fresh worktree. When
+    it has uncommitted changes the switch is unsafe and is not offered.
+
+    Args:
+        branch: The stranded branch name
+        target_branch: Branch the main checkout would be switched back to
+        main_dirty: Whether the main checkout has uncommitted changes
+
+    Returns:
+        The selected StrandedBranchChoice (ABORT if cancelled)
+    """
+    from simple_term_menu import TerminalMenu
+
+    if main_dirty:
+        options = [
+            "Resume in the main checkout as-is (keeps its uncommitted changes)",
+            "Abort",
+        ]
+        choices = [StrandedBranchChoice.IN_PLACE, StrandedBranchChoice.ABORT]
+    else:
+        options = [
+            f"Switch the main checkout back to '{target_branch}' and "
+            f"create a worktree for '{branch}' (recommended)",
+            "Resume in the main checkout as-is (no worktree)",
+            "Abort",
+        ]
+        choices = [
+            StrandedBranchChoice.SWITCH,
+            StrandedBranchChoice.IN_PLACE,
+            StrandedBranchChoice.ABORT,
+        ]
+
+    console.print("\n[bold]How would you like to resume?[/bold]")
+    menu = TerminalMenu(options, cursor_index=0)
+    index = menu.show()
+    if index is None:
+        return StrandedBranchChoice.ABORT
+    return choices[index]
+
+
+def _resolve_switchback_branch(ticket: Ticket, repo_root: Path) -> str | None:
+    """Pick a branch to move a stranded main checkout back to.
+
+    Prefers the ticket's recorded ``base_branch`` when it exists locally,
+    then the repository's detected default branch, then a plain 'main' or
+    'master' if either exists.
+
+    Args:
+        ticket: The ticket being resumed
+        repo_root: Path to the main repository root
+
+    Returns:
+        A local branch name to switch to, or None if none could be resolved
+    """
+    base = ticket.fields.get("base_branch", "").strip()
+    if base and base.lower() != "null" and branch_exists_local(base, cwd=repo_root):
+        return base
+
+    default = get_default_branch(cwd=repo_root)
+    if default and branch_exists_local(default, cwd=repo_root):
+        return default
+
+    for candidate in ("main", "master"):
+        if branch_exists_local(candidate, cwd=repo_root):
+            return candidate
+    return None
+
+
+def _recover_stranded_branch(
+    ticket: Ticket,
+    repo: str,
+    repo_root: Path,
+    branch: str,
+    worktree_path: Path,
+) -> ResumeTarget | None:
+    """Recover a branch checked out on the main checkout (interrupted park).
+
+    Notifies, then prompts for one of: switch the main checkout back and
+    create a worktree, resume in place on the main checkout, or abort.
+
+    Args:
+        ticket: The ticket being resumed
+        repo: Repository name
+        repo_root: Path to the main repository root
+        branch: The stranded branch name
+        worktree_path: Where the managed worktree would live
+
+    Returns:
+        A ResumeTarget, or None when the user aborts.
+
+    Raises:
+        typer.Exit: When the chosen recovery cannot be completed
+    """
+    main_dirty = has_uncommitted_changes(repo_root)
+    target_branch = _resolve_switchback_branch(ticket, repo_root)
+
+    console.print(
+        f"[yellow]Heads up:[/] branch '{branch}' is still checked out on the "
+        f"main checkout at {repo_root}."
+    )
+    console.print(
+        "An earlier park didn't finish switching it back (e.g. an "
+        "interrupted session), so a worktree can't be created for it yet."
+    )
+    if main_dirty:
+        console.print(
+            "The main checkout also has uncommitted changes, so it can't be "
+            "switched automatically."
+        )
+
+    choice = prompt_stranded_branch_choice(branch, target_branch or "?", main_dirty)
+
+    if choice == StrandedBranchChoice.ABORT:
+        console.print("Aborted — nothing changed.")
+        return None
+
+    if choice == StrandedBranchChoice.IN_PLACE:
+        console.print(f"Resuming in the main checkout at {repo_root}...")
+        return ResumeTarget(path=repo_root, is_worktree=False)
+
+    # SWITCH: move the main checkout off the branch, then create the worktree.
+    if target_branch is None:
+        console.print(
+            "[red]Error:[/] Could not determine a branch to switch the main "
+            "checkout back to. Switch it manually, then retry the resume."
+        )
+        raise typer.Exit(1)
+
+    console.print(f"Switching the main checkout back to '{target_branch}'...")
+    if not switch_checkout_to_branch(repo_root, target_branch):
+        console.print(
+            f"[red]Error:[/] Failed to switch the main checkout to "
+            f"'{target_branch}'. Resolve it manually, then retry the resume."
+        )
+        raise typer.Exit(1)
+
+    try:
+        console.print(f"Recreating worktree for branch '{branch}'...")
+        create_worktree(
+            worktree_name=branch,
+            repo_name=repo,
+            worktree_base=LOCAL_WORKTREE_BASE,
+            cwd=repo_root,
+        )
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(1)
+
+    return ResumeTarget(path=worktree_path, is_worktree=True)
+
+
+def _ensure_resume_worktree(
+    ticket: Ticket,
+    repo: str,
+    repo_root: Path,
+    branch: str,
+) -> ResumeTarget | None:
+    """Resolve where a branch-backed ticket should resume.
+
+    Reuses a valid existing worktree; recreates a missing one from the
+    local branch, or from origin/<branch> when only the remote branch
+    exists. Recovers a branch stranded on the main checkout after an
+    interrupted park (prompting the user), and prunes stale worktree
+    registrations. Errors loudly when the directory is not a worktree, the
+    branch is held by another live worktree, or it exists nowhere.
+
+    Args:
+        ticket: The ticket being resumed
+        repo: Repository name
+        repo_root: Path to the main repository root
+        branch: Real branch name (may contain '/')
+
+    Returns:
+        The resolved ResumeTarget, or None when the user aborts recovery.
+
+    Raises:
+        typer.Exit: When the worktree or branch cannot be resolved
+    """
+    worktree_path = worktree_path_for_branch(repo, branch, LOCAL_WORKTREE_BASE)
+    status = check_worktree_exists(
+        worktree_name=branch,
+        repo_name=repo,
+        worktree_base=LOCAL_WORKTREE_BASE,
+        cwd=repo_root,
+    )
+
+    if status == WorktreeStatus.EXISTS_INVALID:
+        console.print(
+            f"[red]Error:[/] Directory exists at {worktree_path} "
+            "but is not a git worktree"
+        )
+        console.print("Please remove the directory, then retry the resume")
+        raise typer.Exit(1)
+
+    if status == WorktreeStatus.EXISTS_VALID:
+        return ResumeTarget(path=worktree_path, is_worktree=True)
+
+    # NOT_EXISTS: recreate from the local or remote branch.
+    try:
+        if branch_exists_local(branch, cwd=repo_root):
+            # The branch may be stranded — checked out somewhere git knows
+            # about but not usable as our worktree (interrupted park, or a
+            # stale registration after a deleted worktree dir).
+            checkout = find_branch_checkout(branch, cwd=repo_root)
+            if checkout is not None:
+                resolved = checkout.resolve()
+                if not resolved.exists():
+                    # Registered to a directory that no longer exists (our
+                    # worktree path or any other) — prune frees the branch.
+                    console.print(
+                        "Pruning a stale worktree registration for "
+                        f"branch '{branch}'..."
+                    )
+                    prune_worktrees(cwd=repo_root)
+                elif resolved == repo_root.resolve():
+                    return _recover_stranded_branch(
+                        ticket, repo, repo_root, branch, worktree_path
+                    )
+                elif resolved != worktree_path.resolve():
+                    console.print(
+                        f"[red]Error:[/] Branch '{branch}' is already checked "
+                        f"out at {resolved}."
+                    )
+                    console.print(
+                        "Free that worktree (or remove it), then retry the "
+                        "resume."
+                    )
+                    raise typer.Exit(1)
+
+            console.print(f"Recreating worktree for branch '{branch}'...")
+            create_worktree(
+                worktree_name=branch,
+                repo_name=repo,
+                worktree_base=LOCAL_WORKTREE_BASE,
+                cwd=repo_root,
+            )
+        elif branch_exists_remote(branch, cwd=repo_root):
+            console.print(
+                f"Branch '{branch}' only exists on origin, "
+                "creating a tracking worktree..."
+            )
+            create_worktree(
+                worktree_name=f"origin/{branch}",
+                repo_name=repo,
+                worktree_base=LOCAL_WORKTREE_BASE,
+                cwd=repo_root,
+            )
+        else:
+            console.print(
+                f"[red]Error:[/] Branch '{branch}' for ticket "
+                f"'{ticket.id}' exists neither locally nor on origin."
+            )
+            console.print(
+                "The branch may have been merged and deleted; "
+                "check the ticket before resuming."
+            )
+            raise typer.Exit(1)
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(1)
+
+    return ResumeTarget(path=worktree_path, is_worktree=True)
+
+
+def _archive_ticket(ticket: Ticket) -> None:
+    """Soft-delete a ticket on resume — the work is no longer parked.
+
+    The ticket is moved to the `.resumed/` archive rather than deleted, so it
+    leaves the board but `vibe resume <id>` can still recover it after an
+    accidental close. The archive is pruned once its worktree is gone.
+
+    Args:
+        ticket: The ticket being resumed
+    """
+    if archive_resumed_ticket(ticket) is not None:
+        console.print(
+            f"Resumed ticket '{ticket.id}' — archived (recover it any time with "
+            f"'vibe resume {ticket.id}')."
+        )
+
+
+def _handle_resume(
+    ticket_id: Optional[str],
+    oc: bool,
+    codex: bool,
+    claude: bool,
+    local: bool,
+) -> None:
+    """Handle 'vibe resume <ticket>': pick a piece of work back up.
+
+    Resume recreates or reuses the ticket's worktree, unwinds the park commit
+    only when the tip is this ticket's marker, launches the tool, and
+    soft-deletes the ticket (moves it to `.resumed/`). Re-resuming a recently
+    resumed ticket recovers it from that archive, so an accidental close is
+    recoverable.
+
+    Args:
+        ticket_id: Ticket id from the command line (None when omitted)
+        oc: Whether --oc flag was provided
+        codex: Whether --codex flag was provided
+        claude: Whether --claude flag was provided
+        local: Whether --local flag was provided
+
+    Raises:
+        typer.Exit: Always — with the session's exit code, or 1 on errors
+    """
+    if ticket_id is None:
+        console.print("[red]Error:[/] 'vibe resume' requires a ticket id")
+        console.print("Usage: vibe resume <ticket-id>")
+        _print_available_tickets()
+        raise typer.Exit(1)
+
+    # Drop stale archive entries whose work is already gone before looking up.
+    prune_resumed_archive(VIBEBOARD_DIR, LOCAL_WORKTREE_BASE)
+
+    # Prefer a live (parked) ticket; fall back to the resumed archive so a
+    # session closed right after resuming can be picked up again by id.
+    ticket = find_ticket(ticket_id, VIBEBOARD_DIR)
+    from_archive = False
+    if ticket is None:
+        ticket = find_resumed_ticket(ticket_id, VIBEBOARD_DIR)
+        from_archive = ticket is not None
+    if ticket is None:
+        console.print(f"[red]Error:[/] No ticket found with id '{ticket_id}'")
+        _print_available_tickets()
+        raise typer.Exit(1)
+    if from_archive:
+        console.print(
+            f"Reconnecting to resumed ticket '{ticket.id}' from the archive..."
+        )
+
+    repo = ticket.repo
+    repo_root = LOCAL_REPO_BASE / repo
+    if not repo_root.is_dir():
+        console.print(
+            f"[red]Error:[/] Repository '{repo}' for ticket '{ticket.id}' "
+            f"not found at {repo_root}"
+        )
+        raise typer.Exit(1)
+    if not validate_git_repo(repo_root):
+        console.print(
+            f"[red]Error:[/] {repo_root} exists but is not a git repository"
+        )
+        raise typer.Exit(1)
+
+    remote_shell = None if local else _resolve_remote_shell()
+    is_powershell = remote_shell == Shell.POWERSHELL
+    tool_name, base_cmd = _resolve_resume_tool(
+        oc, codex, claude, ticket.tool, is_powershell
+    )
+
+    branch = ticket.branch
+    if branch is None:
+        # A parked ticket always records its branch; a ticket without one is
+        # malformed and cannot be resumed.
+        console.print(
+            f"[red]Error:[/] Ticket '{ticket.id}' has no branch and cannot be "
+            "resumed (parked tickets always record a branch)."
+        )
+        raise typer.Exit(1)
+
+    # Reuse or recreate the worktree, unwind only if the tip commit is this
+    # ticket's park marker (safe in every state).
+    target = _ensure_resume_worktree(ticket, repo, repo_root, branch)
+    if target is None:
+        raise typer.Exit(1)  # user aborted recovery
+    _unwind_if_park_marker(target.path, ticket.id)
+
+    # Soft-delete the ticket: the work is now active, no longer parked. An
+    # already-archived ticket (recovered after an accidental close) stays put,
+    # so it remains recoverable if this session is closed again too.
+    if not from_archive:
+        _archive_ticket(ticket)
+
+    console.print(f"Resuming ticket '{ticket.id}' on branch '{branch}'...")
+    if target.is_worktree:
+        if local:
+            def launch(command: str) -> int:
+                return connect_locally(target.path, coding_tool=command)
+        else:
+            def launch(command: str) -> int:
+                return connect_to_remote(
+                    repo_name=repo,
+                    worktree_name=branch_to_worktree_dirname(branch),
+                    with_coding_tool=True,
+                    coding_tool=command,
+                    remote_shell=remote_shell,
+                )
+    else:
+        # Resuming on the main checkout: launch there like a branch-null
+        # session — no managed worktree, so no post-session cleanup.
+        remote_main = REMOTE_REPO_BASE / repo
+
+        if local:
+            def launch(command: str) -> int:
+                return connect_locally(repo_root, coding_tool=command)
+        else:
+            def launch(command: str) -> int:
+                return connect_to_remote_path(
+                    remote_path=remote_main,
+                    with_coding_tool=True,
+                    coding_tool=command,
+                    remote_shell=remote_shell,
+                )
+
+    exit_code = _launch_resume(ticket, tool_name, base_cmd, is_powershell, launch)
+    if target.is_worktree:
+        _run_post_session_cleanup(repo, branch, repo_root)
+    raise typer.Exit(exit_code)
+
+
 @app.command(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -293,8 +1004,14 @@ def main(
     ctx: typer.Context,
     branch: Optional[str] = typer.Argument(
         None,
-        help="Branch name for the worktree. Creates worktree and connects to it.",
+        help="Branch name for the worktree. Creates worktree and connects to it. "
+        "Use the literal 'resume' to resume a Vibe Board ticket.",
         autocompletion=complete_branches,
+    ),
+    ticket: Optional[str] = typer.Argument(
+        None,
+        help="Ticket id for 'vibe resume <ticket>'. Only valid after 'resume'.",
+        autocompletion=complete_ticket_ids,
     ),
     cli: bool = typer.Option(
         False,
@@ -345,6 +1062,8 @@ def main(
         vibe feature-branch --claude      # Create worktree, use Claude Code
         vibe feature-branch --oc          # Create worktree, use OpenCode
         vibe feature-branch --from main   # Create from main branch
+        vibe resume vibe-12               # Resume a Vibe Board ticket
+        vibe resume vibe-12 --local       # Resume a ticket locally
         vibe --cli                        # SSH to home directory
         vibe --cli feature-branch         # Create worktree, SSH shell only
         vibe --local feature-branch       # Work locally (prompts for tool)
@@ -363,6 +1082,20 @@ def main(
         console.print(
             "[red]Error:[/red] Cannot use multiple coding tool flags "
             "(--oc, --codex, --claude)"
+        )
+        raise typer.Exit(1)
+
+    # Handle 'vibe resume <ticket>' — the literal 'resume' as first
+    # positional routes to the Vibe Board resume flow
+    if branch == "resume":
+        _handle_resume(ticket, oc=oc, codex=codex, claude=claude, local=local)
+        return  # pragma: no cover — _handle_resume always raises typer.Exit
+
+    # A second positional is only valid as 'vibe resume <ticket-id>'
+    if ticket is not None:
+        console.print(f"[red]Error:[/red] Unexpected argument '{ticket}'")
+        console.print(
+            "A second argument is only valid as: vibe resume <ticket-id>"
         )
         raise typer.Exit(1)
 
@@ -415,10 +1148,11 @@ def main(
         remote_shell = _resolve_remote_shell()
         exit_code = connect_to_remote(
             repo_name=repo_info.name,
-            worktree_name=branch,
+            worktree_name=branch_to_worktree_dirname(branch),
             with_coding_tool=False,
             remote_shell=remote_shell,
         )
+        _run_post_session_cleanup(repo_info.name, branch, repo_info.root)
         raise typer.Exit(exit_code)
 
     # Handle --local option
@@ -439,8 +1173,11 @@ def main(
         coding_tool = resolve_coding_tool(oc, codex, claude)
         if coding_tool is None:
             coding_tool = prompt_coding_tool_choice()
-        worktree_path = LOCAL_WORKTREE_BASE / repo_info.name / branch
+        worktree_path = worktree_path_for_branch(
+            repo_info.name, branch, LOCAL_WORKTREE_BASE
+        )
         exit_code = connect_locally(worktree_path, coding_tool=coding_tool)
+        _run_post_session_cleanup(repo_info.name, branch, repo_info.root)
         raise typer.Exit(exit_code)
 
     # Handle no-argument case: connect to current context
@@ -475,6 +1212,16 @@ def main(
             coding_tool=coding_tool,
             remote_shell=remote_shell,
         )
+        if (
+            context.context_type == ContextType.WORKTREE
+            and context.repo_name is not None
+            and context.branch is not None
+        ):
+            _run_post_session_cleanup(
+                context.repo_name,
+                context.branch,
+                LOCAL_REPO_BASE / context.repo_name,
+            )
         raise typer.Exit(exit_code)
 
     # Default: create worktree and connect with coding tool
@@ -494,11 +1241,12 @@ def main(
     coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
     exit_code = connect_to_remote(
         repo_name=repo_info.name,
-        worktree_name=branch,
+        worktree_name=branch_to_worktree_dirname(branch),
         with_coding_tool=True,
         coding_tool=coding_tool,
         remote_shell=remote_shell,
     )
+    _run_post_session_cleanup(repo_info.name, branch, repo_info.root)
     raise typer.Exit(exit_code)
 
 

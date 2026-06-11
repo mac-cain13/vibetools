@@ -14,9 +14,41 @@ from vibe.cleanup import (
     clean_all_worktrees,
     clean_specific_worktree,
     cleanup_lingering_directory,
+    post_session_cleanup,
+    prune_resumed_archive,
     remove_worktree,
 )
+from vibe.tickets import read_ticket
 from vibe.utils import is_directory_empty, is_junk_file
+
+
+def write_ticket(store: Path, ticket_id: str, **fields: str) -> Path:
+    """Write a minimal ticket file into a store directory.
+
+    Args:
+        store: Ticket store directory
+        ticket_id: Ticket id (also the filename stem)
+        **fields: Additional frontmatter fields
+
+    Returns:
+        Path to the written ticket file
+    """
+    store.mkdir(parents=True, exist_ok=True)
+    lines = ["---", f"id: {ticket_id}"]
+    for key, value in fields.items():
+        lines.append(f"{key}: {value}")
+    lines.extend(["---", "", "Body."])
+    path = store / f"{ticket_id}.md"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+@pytest.fixture
+def temp_store(tmp_path: Path) -> Path:
+    """Create a temporary Vibe Board ticket store directory."""
+    store = tmp_path / "_vibeboard"
+    store.mkdir()
+    return store
 
 
 class TestIsJunkFile:
@@ -226,6 +258,30 @@ class TestCleanSpecificWorktree:
         assert result is False
         assert worktree_path.exists()
 
+    def test_clean_slashed_branch_worktree(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should remove the encoded directory when given a slashed branch name."""
+        branch = "feature/retry-upload"
+        encoded_path = temp_worktree_base / "test-repo" / "feature%2Fretry-upload"
+        encoded_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", branch, str(encoded_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        result = clean_specific_worktree(
+            worktree_name=branch,
+            repo_name="test-repo",
+            repo_root=temp_git_repo,
+            worktree_base=temp_worktree_base,
+        )
+
+        assert result is True
+        assert not encoded_path.exists()
+
     def test_clean_nonexistent_worktree(
         self, temp_git_repo: Path, temp_worktree_base: Path
     ) -> None:
@@ -327,6 +383,32 @@ class TestCleanAllWorktrees:
         assert stats.cleaned == 0
         assert worktree_path.exists()
 
+    def test_cleans_encoded_worktree_and_prints_branch_name(
+        self,
+        temp_git_repo: Path,
+        temp_worktree_base: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should clean encoded worktree dirs and print the decoded branch name."""
+        branch = "feature/retry-upload"
+        encoded_path = temp_worktree_base / "test-repo" / "feature%2Fretry-upload"
+        encoded_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", branch, str(encoded_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        stats = clean_all_worktrees(worktree_base=temp_worktree_base)
+
+        assert stats.cleaned == 1
+        assert not encoded_path.exists()
+        # Output shows the decoded branch name, not the encoded dirname
+        output = capsys.readouterr().out
+        assert "feature/retry-upload" in output
+        assert "feature%2Fretry-upload" not in output
+
     def test_cleans_lingering_directories(
         self, temp_git_repo: Path, temp_worktree_base: Path
     ) -> None:
@@ -352,3 +434,314 @@ class TestCleanAllWorktrees:
 
         assert stats.lingering == 1
         assert not lingering.exists()
+
+
+class TestPostSessionCleanup:
+    """Tests for post_session_cleanup (parked worktrees removed on exit)."""
+
+    def _make_worktree(
+        self, repo: Path, worktree_base: Path, branch: str
+    ) -> Path:
+        """Create a clean worktree for a new branch at its encoded path."""
+        from vibe.git_ops import branch_to_worktree_dirname
+
+        path = worktree_base / "test-repo" / branch_to_worktree_dirname(branch)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", branch, str(path)],
+            cwd=repo,
+            capture_output=True,
+            check=True,
+        )
+        return path
+
+    def test_removes_worktree_and_nulls_field_when_on_hold(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should remove a clean on_hold worktree and clear the field."""
+        worktree_path = self._make_worktree(
+            temp_git_repo, temp_worktree_base, "feature-park"
+        )
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-1",
+            repo="test-repo",
+            branch="feature-park",
+            state="on_hold",
+            worktree=str(worktree_path),
+        )
+
+        post_session_cleanup(
+            "test-repo",
+            "feature-park",
+            temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert not worktree_path.exists()
+        ticket = read_ticket(ticket_path)
+        assert ticket.worktree is None
+        assert "worktree: null" in ticket_path.read_text()
+
+    def test_removes_slashed_branch_worktree(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should resolve the encoded directory for slashed branch names."""
+        branch = "feature/park-me"
+        worktree_path = self._make_worktree(
+            temp_git_repo, temp_worktree_base, branch
+        )
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-2",
+            repo="test-repo",
+            branch=branch,
+            state="on_hold",
+            worktree=str(worktree_path),
+        )
+
+        post_session_cleanup(
+            "test-repo",
+            branch,
+            temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert not worktree_path.exists()
+        assert read_ticket(ticket_path).worktree is None
+
+    def test_skips_dirty_worktree_loudly(
+        self,
+        temp_git_repo: Path,
+        temp_worktree_base: Path,
+        temp_store: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should never remove a dirty worktree (no --force)."""
+        worktree_path = self._make_worktree(
+            temp_git_repo, temp_worktree_base, "feature-dirty"
+        )
+        (worktree_path / "uncommitted.txt").write_text("uncommitted")
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-3",
+            repo="test-repo",
+            branch="feature-dirty",
+            state="on_hold",
+            worktree=str(worktree_path),
+        )
+
+        post_session_cleanup(
+            "test-repo",
+            "feature-dirty",
+            temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert worktree_path.exists()
+        assert read_ticket(ticket_path).worktree == str(worktree_path)
+        output = capsys.readouterr().out
+        assert "uncommitted changes" in output
+
+    def test_leaves_doing_ticket_untouched(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should not remove the worktree when the ticket is still doing."""
+        worktree_path = self._make_worktree(
+            temp_git_repo, temp_worktree_base, "feature-live"
+        )
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-4",
+            repo="test-repo",
+            branch="feature-live",
+            state="doing",
+            worktree=str(worktree_path),
+        )
+
+        post_session_cleanup(
+            "test-repo",
+            "feature-live",
+            temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert worktree_path.exists()
+        assert read_ticket(ticket_path).worktree == str(worktree_path)
+
+    def test_no_ticket_is_a_silent_noop(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should do nothing when no ticket matches repo + branch."""
+        worktree_path = self._make_worktree(
+            temp_git_repo, temp_worktree_base, "feature-unticketed"
+        )
+
+        post_session_cleanup(
+            "test-repo",
+            "feature-unticketed",
+            temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert worktree_path.exists()
+
+    def test_missing_worktree_is_a_noop(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should do nothing when the on_hold worktree is already gone."""
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-5",
+            repo="test-repo",
+            branch="feature-gone",
+            state="on_hold",
+        )
+
+        post_session_cleanup(
+            "test-repo",
+            "feature-gone",
+            temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert read_ticket(ticket_path).state == "on_hold"
+
+
+class TestCleanAllTicketIntegration:
+    """Tests for ticket awareness in clean_all_worktrees."""
+
+    def test_nulls_worktree_field_on_removal(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should clear the ticket's worktree field after removal."""
+        worktree_path = temp_worktree_base / "test-repo" / "feature-hold"
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "feature-hold", str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-2",
+            repo="test-repo",
+            branch="feature-hold",
+            state="on_hold",
+            worktree=str(worktree_path),
+        )
+
+        stats = clean_all_worktrees(
+            worktree_base=temp_worktree_base, store_dir=temp_store
+        )
+
+        assert stats.cleaned == 1
+        assert not worktree_path.exists()
+        assert read_ticket(ticket_path).worktree is None
+
+
+class TestCleanSpecificTicketIntegration:
+    """Tests for ticket awareness in clean_specific_worktree."""
+
+    def test_nulls_worktree_field_on_removal(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should clear the parked ticket's worktree field after removal."""
+        worktree_path = temp_worktree_base / "test-repo" / "feature-hold"
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "feature-hold", str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        ticket_path = write_ticket(
+            temp_store,
+            "test-repo-2",
+            repo="test-repo",
+            branch="feature-hold",
+            state="on_hold",
+            worktree=str(worktree_path),
+        )
+
+        result = clean_specific_worktree(
+            worktree_name="feature-hold",
+            repo_name="test-repo",
+            repo_root=temp_git_repo,
+            worktree_base=temp_worktree_base,
+            store_dir=temp_store,
+        )
+
+        assert result is True
+        assert read_ticket(ticket_path).worktree is None
+
+
+class TestPruneResumedArchive:
+    """Tests for pruning the .resumed/ archive when worktrees disappear."""
+
+    def _write_archived(
+        self, store: Path, ticket_id: str, **fields: str
+    ) -> Path:
+        """Write a ticket directly into the .resumed/ archive."""
+        archive = store / ".resumed"
+        archive.mkdir(parents=True, exist_ok=True)
+        lines = ["---", f"id: {ticket_id}"]
+        for key, value in fields.items():
+            lines.append(f"{key}: {value}")
+        lines.extend(["---", "", "Body."])
+        path = archive / f"{ticket_id}.md"
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    def test_prunes_archive_when_worktree_gone(
+        self, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should delete an archived ticket whose worktree no longer exists."""
+        archived = self._write_archived(
+            temp_store, "test-repo-1", repo="test-repo", branch="feature-gone"
+        )
+
+        pruned = prune_resumed_archive(
+            store_dir=temp_store, worktree_base=temp_worktree_base
+        )
+
+        assert pruned == 1
+        assert not archived.exists()
+
+    def test_keeps_archive_while_worktree_exists(
+        self, temp_git_repo: Path, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should keep an archived ticket whose worktree is still present."""
+        worktree_path = temp_worktree_base / "test-repo" / "feature-live"
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "feature-live", str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        archived = self._write_archived(
+            temp_store, "test-repo-2", repo="test-repo", branch="feature-live"
+        )
+
+        pruned = prune_resumed_archive(
+            store_dir=temp_store, worktree_base=temp_worktree_base
+        )
+
+        assert pruned == 0
+        assert archived.exists()
+
+    def test_no_archive_directory_is_a_noop(
+        self, temp_worktree_base: Path, temp_store: Path
+    ) -> None:
+        """Should do nothing when there is no .resumed/ directory."""
+        assert prune_resumed_archive(
+            store_dir=temp_store, worktree_base=temp_worktree_base
+        ) == 0

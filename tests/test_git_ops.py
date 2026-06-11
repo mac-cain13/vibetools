@@ -14,6 +14,7 @@ from vibe.git_ops import (
     WorktreeStatus,
     branch_exists_local,
     branch_exists_remote,
+    branch_to_worktree_dirname,
     check_worktree_exists,
     create_worktree,
     get_current_context,
@@ -24,7 +25,62 @@ from vibe.git_ops import (
     is_git_worktree,
     is_inside_worktree_base,
     validate_git_repo,
+    worktree_dirname_to_branch,
+    worktree_path_for_branch,
 )
+
+# Branch <-> dirname mapping cases: (branch, expected encoded dirname)
+BRANCH_DIRNAME_CASES = [
+    ("main", "main"),
+    ("feature/retry-upload", "feature%2Fretry-upload"),
+    ("a/b/c", "a%2Fb%2Fc"),
+    ("a%b", "a%25b"),
+    ("a%2Fb", "a%252Fb"),  # A branch literally containing the text %2F
+    ("fix/50%-faster", "fix%2F50%25-faster"),
+]
+
+
+class TestBranchDirnameMapping:
+    """Tests for branch <-> worktree directory name mapping."""
+
+    @pytest.mark.parametrize("branch,dirname", BRANCH_DIRNAME_CASES)
+    def test_encode(self, branch: str, dirname: str) -> None:
+        """Should encode branch names to the expected directory names."""
+        assert branch_to_worktree_dirname(branch) == dirname
+
+    @pytest.mark.parametrize("branch,dirname", BRANCH_DIRNAME_CASES)
+    def test_decode(self, branch: str, dirname: str) -> None:
+        """Should decode directory names back to the expected branch names."""
+        assert worktree_dirname_to_branch(dirname) == branch
+
+    @pytest.mark.parametrize("branch,dirname", BRANCH_DIRNAME_CASES)
+    def test_round_trip(self, branch: str, dirname: str) -> None:
+        """decode(encode(x)) should equal x for all cases."""
+        assert worktree_dirname_to_branch(branch_to_worktree_dirname(branch)) == branch
+
+    @pytest.mark.parametrize("branch,dirname", BRANCH_DIRNAME_CASES)
+    def test_encoded_dirname_is_single_path_component(
+        self, branch: str, dirname: str
+    ) -> None:
+        """Encoded directory names must never contain '/'."""
+        assert "/" not in branch_to_worktree_dirname(branch)
+
+
+class TestWorktreePathForBranch:
+    """Tests for worktree_path_for_branch function."""
+
+    def test_plain_branch(self, tmp_path: Path) -> None:
+        """Should build base/repo/branch for a branch without slashes."""
+        path = worktree_path_for_branch("test-repo", "main", worktree_base=tmp_path)
+        assert path == tmp_path / "test-repo" / "main"
+
+    def test_slashed_branch_is_encoded(self, tmp_path: Path) -> None:
+        """Should encode slashed branch names into a single path component."""
+        path = worktree_path_for_branch(
+            "test-repo", "feature/retry-upload", worktree_base=tmp_path
+        )
+        assert path == tmp_path / "test-repo" / "feature%2Fretry-upload"
+        assert path.parent == tmp_path / "test-repo"
 
 
 class TestValidateGitRepo:
@@ -121,6 +177,47 @@ class TestCheckWorktreeExists:
             cwd=temp_git_repo,
         )
         assert status == WorktreeStatus.EXISTS_INVALID
+
+    def test_slashed_branch_not_exists(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should return NOT_EXISTS for a slashed branch without a worktree."""
+        status = check_worktree_exists(
+            worktree_name="feature/retry-upload",
+            repo_name="test-repo",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+        assert status == WorktreeStatus.NOT_EXISTS
+
+    def test_slashed_branch_exists_valid(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should find a worktree for a slashed branch via the encoded path."""
+        # Create a worktree at the encoded directory for the slashed branch
+        worktree_path = temp_worktree_base / "test-repo" / "feature%2Fretry-upload"
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                "feature/retry-upload",
+                str(worktree_path),
+            ],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        status = check_worktree_exists(
+            worktree_name="feature/retry-upload",
+            repo_name="test-repo",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+        assert status == WorktreeStatus.EXISTS_VALID
 
 
 class TestBranchExists:
@@ -361,6 +458,81 @@ class TestCreateWorktree:
                 cwd=repo,
             )
 
+    def test_create_with_slashed_branch(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should encode slashed branch names into a flat directory name."""
+        worktree_path = create_worktree(
+            worktree_name="feature/retry-upload",
+            repo_name="test-repo",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+
+        # Directory is the encoded name, directly under the repo dir
+        assert worktree_path == (
+            temp_worktree_base / "test-repo" / "feature%2Fretry-upload"
+        )
+        assert worktree_path.exists()
+        # No nested 'feature/' directory was created
+        assert not (temp_worktree_base / "test-repo" / "feature").exists()
+
+        # The branch inside the worktree is the real slashed branch name
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            cwd=worktree_path,
+            check=True,
+        )
+        assert result.stdout.strip() == "feature/retry-upload"
+        assert branch_exists_local("feature/retry-upload", cwd=temp_git_repo)
+
+    def test_create_from_remote_slashed_branch(
+        self, temp_git_repo_with_remote: tuple[Path, Path], temp_worktree_base: Path
+    ) -> None:
+        """Should encode the local tracking branch dirname for origin/ refs."""
+        repo, _ = temp_git_repo_with_remote
+
+        # Create a slashed branch on the remote, then remove it locally
+        subprocess.run(
+            ["git", "branch", "feature/remote-slashed"],
+            cwd=repo,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "push", "origin", "feature/remote-slashed"],
+            cwd=repo,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "branch", "-D", "feature/remote-slashed"],
+            cwd=repo,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=repo,
+            capture_output=True,
+            check=True,
+        )
+
+        worktree_path = create_worktree(
+            worktree_name="origin/feature/remote-slashed",
+            repo_name="test-repo",
+            worktree_base=temp_worktree_base,
+            cwd=repo,
+        )
+
+        assert worktree_path == (
+            temp_worktree_base / "test-repo" / "feature%2Fremote-slashed"
+        )
+        assert worktree_path.exists()
+        assert branch_exists_local("feature/remote-slashed", cwd=repo)
+
     def test_creates_repo_directory(
         self, temp_git_repo: Path, temp_worktree_base: Path
     ) -> None:
@@ -483,6 +655,54 @@ class TestGetCurrentContext:
         assert context.local_path == worktree_path
         assert context.repo_name == repo_name
         assert context.worktree_name == worktree_name
+        assert context.branch == worktree_name  # No slashes: decoded == dirname
+
+    def test_in_worktree_with_slashed_branch(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should report the encoded dirname and the decoded branch name."""
+        branch = "feature/retry-upload"
+        worktree_path = create_worktree(
+            worktree_name=branch,
+            repo_name="test-repo",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+
+        remote_base = temp_worktree_base.parent
+
+        context = get_current_context(
+            cwd=worktree_path,
+            repo_base=temp_worktree_base.parent,
+            worktree_base=temp_worktree_base,
+            remote_base=remote_base,
+        )
+
+        assert context.context_type == ContextType.WORKTREE
+        assert context.local_path == worktree_path
+        assert context.repo_name == "test-repo"
+        # worktree_name is the on-disk (encoded) directory name
+        assert context.worktree_name == "feature%2Fretry-upload"
+        # branch is the decoded branch name
+        assert context.branch == branch
+        # remote_path uses the encoded directory name
+        assert context.remote_path == (
+            remote_base / "_vibecoding" / "test-repo" / "feature%2Fretry-upload"
+        )
+
+    def test_branch_is_none_outside_worktree(self, temp_git_repo: Path) -> None:
+        """Should leave branch as None outside worktree context."""
+        repo_base = temp_git_repo.parent
+
+        context = get_current_context(
+            cwd=temp_git_repo,
+            repo_base=repo_base,
+            worktree_base=repo_base / "_vibecoding",
+            remote_base=repo_base,
+        )
+
+        assert context.context_type == ContextType.MAIN_REPO
+        assert context.branch is None
 
     def test_repo_not_in_expected_location(self, temp_git_repo: Path, tmp_path: Path) -> None:
         """Should return MAIN_REPO but with no remote_path when not in expected location."""
@@ -500,3 +720,127 @@ class TestGetCurrentContext:
         assert context.context_type == ContextType.MAIN_REPO
         assert context.local_path == temp_git_repo
         assert context.remote_path is None  # Not in expected location
+
+
+class TestBranchCheckoutHelpers:
+    """Tests for stranded-branch detection and recovery helpers."""
+
+    def test_find_branch_checkout_main(self, temp_git_repo: Path) -> None:
+        """Should find a branch checked out in the main checkout."""
+        from vibe.git_ops import find_branch_checkout
+
+        subprocess.run(
+            ["git", "checkout", "-b", "feature-x"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        found = find_branch_checkout("feature-x", cwd=temp_git_repo)
+        assert found is not None
+        assert found.resolve() == temp_git_repo.resolve()
+
+    def test_find_branch_checkout_in_worktree(
+        self, temp_git_repo: Path, tmp_path: Path
+    ) -> None:
+        """Should find a branch checked out in a linked worktree."""
+        from vibe.git_ops import find_branch_checkout
+
+        wt = tmp_path / "wt"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "feature-y", str(wt)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        found = find_branch_checkout("feature-y", cwd=temp_git_repo)
+        assert found is not None
+        assert found.resolve() == wt.resolve()
+
+    def test_find_branch_checkout_not_checked_out(
+        self, temp_git_repo: Path
+    ) -> None:
+        """Should return None for a branch checked out nowhere."""
+        from vibe.git_ops import find_branch_checkout
+
+        subprocess.run(
+            ["git", "branch", "idle-branch"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        assert find_branch_checkout("idle-branch", cwd=temp_git_repo) is None
+        assert find_branch_checkout("nope", cwd=temp_git_repo) is None
+
+    def test_switch_checkout_to_branch(self, temp_git_repo: Path) -> None:
+        """Should switch the checkout to another existing branch."""
+        from vibe.git_ops import switch_checkout_to_branch
+
+        subprocess.run(
+            ["git", "checkout", "-b", "feature-z"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        assert switch_checkout_to_branch(temp_git_repo, "main") is True
+        current = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert current.stdout.strip() == "main"
+
+    def test_switch_checkout_to_missing_branch_fails(
+        self, temp_git_repo: Path
+    ) -> None:
+        """Should return False when the target branch does not exist."""
+        from vibe.git_ops import switch_checkout_to_branch
+
+        assert switch_checkout_to_branch(temp_git_repo, "no-such-branch") is False
+
+    def test_prune_worktrees_frees_stale_branch(
+        self, temp_git_repo: Path, tmp_path: Path
+    ) -> None:
+        """Should drop a registration whose directory was removed."""
+        import shutil
+
+        from vibe.git_ops import find_branch_checkout, prune_worktrees
+
+        wt = tmp_path / "stale-wt"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "stale", str(wt)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        shutil.rmtree(wt)
+        assert find_branch_checkout("stale", cwd=temp_git_repo) is not None
+
+        prune_worktrees(cwd=temp_git_repo)
+        assert find_branch_checkout("stale", cwd=temp_git_repo) is None
+
+    def test_get_default_branch_from_origin(
+        self, temp_git_repo_with_remote: tuple[Path, Path]
+    ) -> None:
+        """Should resolve the default branch from origin/HEAD."""
+        from vibe.git_ops import get_default_branch
+
+        repo, _ = temp_git_repo_with_remote
+        subprocess.run(
+            ["git", "remote", "set-head", "origin", "--auto"],
+            cwd=repo,
+            capture_output=True,
+        )
+
+        assert get_default_branch(cwd=repo) in {"main", "master"}
+
+    def test_get_default_branch_no_origin(self, temp_git_repo: Path) -> None:
+        """Should return None when there is no origin HEAD."""
+        from vibe.git_ops import get_default_branch
+
+        assert get_default_branch(cwd=temp_git_repo) is None

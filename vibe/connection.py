@@ -300,8 +300,10 @@ def connect_locally(
         console.print(f"[red]Error:[/] Worktree path does not exist: {worktree_path}")
         return 1
 
-    # Run the coding tool in the worktree directory
-    result = subprocess.run([coding_tool], cwd=worktree_path)
+    # Run the coding tool in the worktree directory. The tool command may
+    # carry arguments (e.g. 'cly --resume <session-id>'), so split it into
+    # an argv list instead of running it as a bare single-element command.
+    result = subprocess.run(shlex.split(coding_tool), cwd=worktree_path)
 
     console.print("Returning to original directory...")
     return result.returncode

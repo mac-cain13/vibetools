@@ -30,6 +30,58 @@ class RepoInfo:
     name: str
 
 
+def branch_to_worktree_dirname(branch: str) -> str:
+    """Encode a branch name into a flat worktree directory name.
+
+    Branch names may contain '/', but worktree directories must be a single
+    path component. The mapping is deterministic and reversible: '%' is
+    replaced with '%25' first, then '/' with '%2F'.
+
+    Args:
+        branch: Real branch name (may contain '/')
+
+    Returns:
+        Encoded directory name containing no '/'
+    """
+    return branch.replace("%", "%25").replace("/", "%2F")
+
+
+def worktree_dirname_to_branch(dirname: str) -> str:
+    """Decode a worktree directory name back into the real branch name.
+
+    Reverses branch_to_worktree_dirname: '%2F' is replaced with '/' first,
+    then '%25' with '%'.
+
+    Args:
+        dirname: Encoded worktree directory name
+
+    Returns:
+        The real branch name (may contain '/')
+    """
+    return dirname.replace("%2F", "/").replace("%25", "%")
+
+
+def worktree_path_for_branch(
+    repo_name: str,
+    branch: str,
+    worktree_base: Path = LOCAL_WORKTREE_BASE,
+) -> Path:
+    """Build the on-disk worktree path for a branch.
+
+    The directory name is the encoded branch name so that branches
+    containing '/' map to a single path component.
+
+    Args:
+        repo_name: Name of the repository
+        branch: Real branch name (may contain '/')
+        worktree_base: Base directory for worktrees
+
+    Returns:
+        Path of the form worktree_base / repo_name / encoded-dirname
+    """
+    return worktree_base / repo_name / branch_to_worktree_dirname(branch)
+
+
 def validate_git_repo(cwd: Path | None = None) -> bool:
     """Check if the current directory is inside a git repository.
 
@@ -81,7 +133,7 @@ def check_worktree_exists(
     """Check if a worktree exists and whether it's valid.
 
     Args:
-        worktree_name: Name of the worktree/branch
+        worktree_name: Branch name for the worktree (encoded for the path)
         repo_name: Name of the repository
         worktree_base: Base directory for worktrees
         cwd: Working directory for git commands
@@ -89,7 +141,7 @@ def check_worktree_exists(
     Returns:
         WorktreeStatus indicating the state of the worktree
     """
-    worktree_path = worktree_base / repo_name / worktree_name
+    worktree_path = worktree_path_for_branch(repo_name, worktree_name, worktree_base)
 
     if not worktree_path.exists():
         return WorktreeStatus.NOT_EXISTS
@@ -211,6 +263,158 @@ def has_uncommitted_changes(worktree_path: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def get_tip_commit_subject(worktree_path: Path) -> str | None:
+    """Get the subject line of a worktree's tip commit.
+
+    Decoding is lossy ('errors=replace'): the only consumer compares the
+    subject against the ASCII park marker, so a non-UTF-8 commit subject
+    simply fails that comparison instead of crashing the resume.
+
+    Args:
+        worktree_path: Path to the worktree
+
+    Returns:
+        The tip commit's subject line (stripped), or None when it cannot
+        be read (missing directory, no commits, not a git worktree)
+    """
+    if not worktree_path.is_dir():
+        return None
+
+    result = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        cwd=worktree_path,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def unwind_park_commit(worktree_path: Path) -> bool:
+    """Unwind a worktree's tip commit with a mixed reset.
+
+    A mixed 'git reset HEAD~1' restores the commit's contents as
+    working-directory changes: tracked changes return unstaged and
+    previously-untracked files reappear (vibeboard-format.md section 8).
+    Callers must verify the tip commit is the park marker before calling.
+
+    Args:
+        worktree_path: Path to the worktree
+
+    Returns:
+        True if the reset succeeded
+    """
+    result = subprocess.run(
+        ["git", "reset", "HEAD~1"],
+        capture_output=True,
+        cwd=worktree_path,
+    )
+    return result.returncode == 0
+
+
+def find_branch_checkout(branch: str, cwd: Path | None = None) -> Path | None:
+    """Find which worktree (if any) currently has a branch checked out.
+
+    Git refuses to check a branch out in two worktrees at once, so a branch
+    can be checked out in at most one place. This parses 'git worktree list'
+    to find it — used by resume to detect a branch stranded on the main
+    checkout after an interrupted park.
+
+    Args:
+        branch: Real branch name (may contain '/')
+        cwd: Working directory for git commands
+
+    Returns:
+        Path to the worktree holding the branch, or None if the branch is
+        not checked out anywhere (or git could not be queried)
+    """
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if result.returncode != 0:
+        return None
+
+    current: Path | None = None
+    target_ref = f"refs/heads/{branch}"
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            current = Path(line[len("worktree "):])
+        elif line.startswith("branch ") and line[len("branch "):] == target_ref:
+            return current
+    return None
+
+
+def prune_worktrees(cwd: Path | None = None) -> None:
+    """Prune stale worktree administrative entries.
+
+    Removes registrations whose working-tree directory no longer exists,
+    freeing a branch that git still believes is checked out. Safe to call
+    unconditionally — it only touches entries with missing directories.
+
+    Args:
+        cwd: Working directory for git commands
+    """
+    subprocess.run(
+        ["git", "worktree", "prune"],
+        capture_output=True,
+        cwd=cwd,
+    )
+
+
+def switch_checkout_to_branch(repo_root: Path, target_branch: str) -> bool:
+    """Switch a checkout to another branch (e.g. to free a stranded branch).
+
+    Used by resume to complete an interrupted park's switch-back: moving the
+    main checkout off a ticket's branch so it can be checked out in a
+    worktree. The caller must ensure the working tree is clean first.
+
+    Args:
+        repo_root: Path to the checkout to switch
+        target_branch: Branch to switch to
+
+    Returns:
+        True if the switch succeeded
+    """
+    result = subprocess.run(
+        ["git", "switch", target_branch],
+        capture_output=True,
+        cwd=repo_root,
+    )
+    return result.returncode == 0
+
+
+def get_default_branch(cwd: Path | None = None) -> str | None:
+    """Get the repository's default branch name.
+
+    Resolves origin's HEAD symbolic ref (e.g. 'origin/main' -> 'main'). Used
+    as a fall-back target when switching a stranded main checkout away from a
+    ticket's branch and the ticket records no usable base branch.
+
+    Args:
+        cwd: Working directory for git commands
+
+    Returns:
+        The default branch name, or None if it cannot be determined
+    """
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if result.returncode != 0:
+        return None
+    ref = result.stdout.strip()
+    if ref.startswith("origin/"):
+        return ref[len("origin/"):]
+    return ref or None
+
+
 def create_worktree(
     worktree_name: str,
     repo_name: str,
@@ -226,7 +430,8 @@ def create_worktree(
     3. New branch - creates new branch and worktree (optionally from base)
 
     Args:
-        worktree_name: Name for the worktree (usually branch name)
+        worktree_name: Branch name for the worktree (the on-disk directory
+            name is the encoded form; git commands use the real branch name)
         repo_name: Name of the repository
         base_branch: Optional base branch to create new branch from
         worktree_base: Base directory for worktrees
@@ -245,7 +450,9 @@ def create_worktree(
     # Handle origin/ prefix (remote branch reference)
     if worktree_name.startswith("origin/"):
         local_branch_name = worktree_name[7:]  # Remove "origin/" prefix
-        worktree_path = repo_worktree_dir / local_branch_name
+        worktree_path = repo_worktree_dir / branch_to_worktree_dirname(
+            local_branch_name
+        )
 
         # Check if remote branch exists
         if not branch_exists_remote(worktree_name, cwd):
@@ -285,8 +492,8 @@ def create_worktree(
 
         return worktree_path
 
-    # Standard worktree path
-    worktree_path = repo_worktree_dir / worktree_name
+    # Standard worktree path (directory name is the encoded branch name)
+    worktree_path = repo_worktree_dir / branch_to_worktree_dirname(worktree_name)
 
     # Check if local branch already exists
     if branch_exists_local(worktree_name, cwd):
@@ -427,7 +634,8 @@ class CurrentContext:
     local_path: Path | None = None
     remote_path: Path | None = None
     repo_name: str | None = None
-    worktree_name: str | None = None
+    worktree_name: str | None = None  # Encoded on-disk directory name
+    branch: str | None = None  # Decoded branch name (None outside worktree context)
 
 
 def is_inside_worktree_base(
@@ -527,6 +735,7 @@ def get_current_context(
     if is_git_worktree(cwd):
         # We're in a worktree - extract worktree name from path
         # Worktree path: {worktree_base}/{repo_name}/{worktree_name}
+        # where {worktree_name} is the encoded branch directory name
         try:
             rel_path = repo_info.root.relative_to(worktree_base)
             parts = rel_path.parts
@@ -540,6 +749,7 @@ def get_current_context(
                     remote_path=remote_path,
                     repo_name=repo_name,
                     worktree_name=worktree_name,
+                    branch=worktree_dirname_to_branch(worktree_name),
                 )
         except ValueError:
             pass

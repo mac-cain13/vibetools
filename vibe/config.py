@@ -55,6 +55,9 @@ else:  # WSL
 LOCAL_WORKTREE_BASE = LOCAL_REPO_BASE / "_vibecoding"
 REMOTE_WORKTREE_BASE = REMOTE_REPO_BASE / "_vibecoding"
 
+# Vibe Board ticket store (inside repo base)
+VIBEBOARD_DIR = LOCAL_REPO_BASE / "_vibeboard"
+
 # SSH key path
 SSH_KEY_PATH = Path.home() / ".ssh" / "id_vibecoding"
 

@@ -74,12 +74,32 @@ vibe --cli
 # Work locally instead of SSH
 vibe --local feature-branch --claude
 
+# Resume a Vibe Board ticket (recreates the worktree, relaunches the tool)
+vibe resume vibe-12
+
 # Clean up a specific worktree
 vibe --clean feature-branch
 
 # Clean up all worktrees across all repos
 vibe --clean
 ```
+
+### Vibe Board
+
+`vibe resume <ticket-id>` picks parked work back up from the Vibe Board — a
+durable registry of **parked (on-hold)** work, one markdown ticket per file in
+`<repo-base>/_vibeboard`. A ticket exists only while its work is parked: the
+`park` skill creates it; resume deletes it. Resume recreates (or reuses) the
+ticket's worktree, unwinds the park commit when the tip is this ticket's
+`wip: park <id>` marker, relaunches the recorded coding tool (resuming the
+Claude session when one is recorded), and soft-deletes the ticket — it moves to
+a hidden `.resumed/` archive so the board clears, but `vibe resume <id>` can
+still recover it (so an accidental close right after resuming is recoverable).
+When a parked session exits, vibe removes the worktree, and
+`vibe --clean` is a backstop sweep (worktrees with uncommitted changes are
+skipped). A menubar Mac app (`VibeBoard/`) lists parked tickets and opens a
+floating window to read and comment on each. The on-disk ticket format is
+specified in [docs/vibeboard-format.md](docs/vibeboard-format.md).
 
 ### Context-Aware Behavior
 
@@ -114,12 +134,14 @@ vibe --clean
 ## CLI Reference
 
 ```
-vibe [OPTIONS] [BRANCH]
+vibe [OPTIONS] [BRANCH] [TICKET]
 
 Arguments:
   BRANCH    Branch name for the worktree. Creates worktree and connects to it.
             Supports origin/branch syntax for remote branches.
             If omitted, connects to current repo/worktree context.
+            The literal 'resume' resumes a Vibe Board ticket instead.
+  TICKET    Ticket id for 'vibe resume <ticket>'. Only valid after 'resume'.
 
 Options:
   --codex        Use Codex (cdx) as the coding tool.

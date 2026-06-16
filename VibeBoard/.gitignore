@@ -1,4 +1,0 @@
-# SwiftPM build products and local Xcode/SwiftPM state
-.build/
-.swiftpm/
-*.xcodeproj

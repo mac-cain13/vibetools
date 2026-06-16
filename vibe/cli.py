@@ -16,7 +16,6 @@ from vibe.cleanup import (
     clean_all_worktrees,
     clean_specific_worktree,
     post_session_cleanup,
-    prune_resumed_archive,
 )
 from vibe.config import (
     CLAUDE_CODE_CMD,
@@ -30,7 +29,6 @@ from vibe.config import (
     OPEN_CODE_DIRECT_CMD,
     REMOTE_IS_WINDOWS,
     REMOTE_REPO_BASE,
-    VIBEBOARD_DIR,
 )
 from vibe.connection import (
     connect_locally,
@@ -64,23 +62,23 @@ from vibe.git_ops import (
     worktree_path_for_branch,
 )
 from vibe.platform import Shell
-from vibe.tickets import (
-    Ticket,
-    archive_resumed_ticket,
-    find_resumed_ticket,
-    find_ticket,
+from vibe.nsproject import (
+    ParkedWork,
+    find_board,
+    find_parked_work,
     is_safe_session_id,
     is_safe_ticket_id,
-    list_tickets,
+    list_resumable,
+    mark_resumed,
 )
 
 # Fixed bootstrap prompt used to seed a fresh Claude session on resume
-# (vibeboard-format.md section 8): no apostrophes, no freeform text, safe
-# through shell quoting. The ticket id is embedded only after it passes
+# (docs/nsproject-park.md §3): no apostrophes, no freeform text, safe through
+# shell quoting. The ticket id is embedded only after it passes
 # is_safe_ticket_id.
 RESUME_BOOTSTRAP_PROMPT = (
-    "Read parked ticket {ticket_id} via the park skill "
-    "and continue from its next step."
+    "Read NSProject ticket {ticket_id} via the nsproject skill "
+    'and continue from its "Where I left off".'
 )
 
 
@@ -138,12 +136,12 @@ def complete_ticket_ids(incomplete: str) -> List[str]:
         incomplete: The partial ticket id typed so far
 
     Returns:
-        List of matching ticket ids from the Vibe Board store
+        List of matching resumable ticket ids from the NSProject board
     """
     try:
         return [
             ticket.id
-            for ticket in list_tickets(VIBEBOARD_DIR)
+            for ticket in list_resumable()
             if ticket.id.startswith(incomplete)
         ]
     except Exception:
@@ -365,8 +363,9 @@ def _run_post_session_cleanup(
 ) -> None:
     """Run post-session worktree cleanup for a worktree-backed session.
 
-    Called after every worktree session exits: if the session's ticket was
-    parked ('on_hold') during the session, the worktree is removed.
+    Called after every worktree session exits: if the session was parked (its
+    worktree tip is a 'wip: park' marker) and the tree is clean, the worktree is
+    removed (it is reconstructed from the branch on resume).
 
     Args:
         repo_name: Name of the repository
@@ -378,23 +377,25 @@ def _run_post_session_cleanup(
         branch,
         repo_root,
         worktree_base=LOCAL_WORKTREE_BASE,
-        store_dir=VIBEBOARD_DIR,
     )
 
 
 def _print_available_tickets() -> None:
-    """Print the ids of all tickets in the Vibe Board store."""
-    tickets = list_tickets(VIBEBOARD_DIR)
+    """Print the ids of resumable tickets on the NSProject board."""
+    tickets = list_resumable()
     if not tickets:
-        console.print(f"[dim]No tickets found in {VIBEBOARD_DIR}[/dim]")
+        console.print(
+            "[dim]No resumable tickets found on the NSProject board[/dim]"
+        )
         return
 
-    console.print("Available tickets:")
+    console.print("Resumable tickets:")
     for ticket in tickets:
         # Ids and titles come from hand-editable files: escape them so
         # bracketed text is never interpreted as Rich markup
+        marker = "parked" if ticket.parked else "in progress"
         console.print(
-            f"  {escape(ticket.id)}  [dim]({ticket.state})[/dim] "
+            f"  {escape(ticket.id)}  [dim]({marker})[/dim] "
             f"{escape(ticket.title)}"
         )
 
@@ -446,22 +447,22 @@ def _resolve_resume_tool(
 def _build_resume_command(
     base_cmd: str,
     tool_name: Optional[str],
-    ticket: Ticket,
+    work: ParkedWork,
     powershell: bool,
     use_session: bool = True,
 ) -> tuple[str, bool]:
     """Build the coding tool command string for a resume launch.
 
-    Claude resumes its recorded session via --resume when the ticket
+    Claude resumes its recorded session via --resume when the work entry
     carries a safe session id; otherwise a fresh Claude session is seeded
     with the fixed bootstrap prompt. Non-Claude tools always launch fresh
     with no arguments (no session restore, no bootstrap prompt —
-    vibeboard-format.md section 4).
+    docs/nsproject-park.md §7).
 
     Args:
         base_cmd: Base coding tool command
         tool_name: Resolved tool name (claude|codex|opencode|None)
-        ticket: The ticket being resumed
+        work: The parked work being resumed
         powershell: Whether the remote shell is PowerShell
         use_session: Whether to attempt resuming the recorded session
 
@@ -477,54 +478,58 @@ def _build_resume_command(
     if tool_name != "claude":
         return base_cmd, False
 
-    session_id = ticket.session_id
+    session_id = work.session_id
     if use_session and session_id is not None and is_safe_session_id(session_id):
         return f"{base_cmd} --resume {session_id}", True
 
-    if is_safe_ticket_id(ticket.id):
-        prompt = RESUME_BOOTSTRAP_PROMPT.format(ticket_id=ticket.id)
+    if is_safe_ticket_id(work.id):
+        prompt = RESUME_BOOTSTRAP_PROMPT.format(ticket_id=work.id)
         return f"{base_cmd} {shlex.quote(prompt)}", False
 
     return base_cmd, False
 
 
 def _launch_resume(
-    ticket: Ticket,
+    work: ParkedWork,
     tool_name: Optional[str],
     base_cmd: str,
     powershell: bool,
     launch: Callable[[str], int],
+    seed_fresh: bool = False,
 ) -> int:
     """Launch the coding tool for a resume, degrading on stale sessions.
 
     When a Claude session resume exits non-zero, the recorded session id
     may be stale; the user is offered a single fresh relaunch seeded with
-    the bootstrap prompt (vibeboard-format.md section 8).
+    the bootstrap prompt (docs/nsproject-park.md §7). When ``seed_fresh`` is
+    set (cross-dev / branch unavailable locally) the session is never
+    attempted — the launch goes straight to the bootstrap prompt.
 
     Args:
-        ticket: The ticket being resumed
+        work: The parked work being resumed
         tool_name: Resolved tool name (claude|codex|opencode|None)
         base_cmd: Base coding tool command
         powershell: Whether the remote shell is PowerShell
         launch: Callable that runs a tool command and returns its exit code
+        seed_fresh: Skip session restore and seed the bootstrap prompt
 
     Returns:
         Exit code of the (re)launched session
     """
     command, used_resume = _build_resume_command(
-        base_cmd, tool_name, ticket, powershell
+        base_cmd, tool_name, work, powershell, use_session=not seed_fresh
     )
     exit_code = launch(command)
 
     if used_resume and exit_code != 0:
         console.print(
-            f"[yellow]Warning:[/] Resuming session '{ticket.session_id}' "
+            f"[yellow]Warning:[/] Resuming session '{work.session_id}' "
             f"exited with code {exit_code}; the recorded session id may "
             "be stale."
         )
         if typer.confirm("Relaunch with a fresh session?", default=True):
             command, _ = _build_resume_command(
-                base_cmd, tool_name, ticket, powershell, use_session=False
+                base_cmd, tool_name, work, powershell, use_session=False
             )
             exit_code = launch(command)
 
@@ -561,13 +566,17 @@ class ResumeTarget:
 
     Attributes:
         path: Directory to unwind in and launch the tool from.
-        is_worktree: True when ``path`` is a managed worktree (set the
-            ticket's worktree field and run post-session cleanup after);
-            False when resuming in place on the repo's main checkout.
+        is_worktree: True when ``path`` is a managed worktree (run
+            post-session cleanup after); False when resuming in place on the
+            repo's main checkout.
+        fresh: True when there is no local code state to restore (the branch
+            is unavailable on this machine — typically cross-dev). The launch
+            skips the unwind and seeds a fresh session from the handoff note.
     """
 
     path: Path
     is_worktree: bool
+    fresh: bool = False
 
 
 class StrandedBranchChoice(Enum):
@@ -626,22 +635,22 @@ def prompt_stranded_branch_choice(
     return choices[index]
 
 
-def _resolve_switchback_branch(ticket: Ticket, repo_root: Path) -> str | None:
+def _resolve_switchback_branch(work: ParkedWork, repo_root: Path) -> str | None:
     """Pick a branch to move a stranded main checkout back to.
 
-    Prefers the ticket's recorded ``base_branch`` when it exists locally,
+    Prefers the work entry's recorded ``base_branch`` when it exists locally,
     then the repository's detected default branch, then a plain 'main' or
     'master' if either exists.
 
     Args:
-        ticket: The ticket being resumed
+        work: The parked work being resumed
         repo_root: Path to the main repository root
 
     Returns:
         A local branch name to switch to, or None if none could be resolved
     """
-    base = ticket.fields.get("base_branch", "").strip()
-    if base and base.lower() != "null" and branch_exists_local(base, cwd=repo_root):
+    base = work.base_branch
+    if base and branch_exists_local(base, cwd=repo_root):
         return base
 
     default = get_default_branch(cwd=repo_root)
@@ -655,8 +664,7 @@ def _resolve_switchback_branch(ticket: Ticket, repo_root: Path) -> str | None:
 
 
 def _recover_stranded_branch(
-    ticket: Ticket,
-    repo: str,
+    work: ParkedWork,
     repo_root: Path,
     branch: str,
     worktree_path: Path,
@@ -667,8 +675,7 @@ def _recover_stranded_branch(
     create a worktree, resume in place on the main checkout, or abort.
 
     Args:
-        ticket: The ticket being resumed
-        repo: Repository name
+        work: The parked work being resumed
         repo_root: Path to the main repository root
         branch: The stranded branch name
         worktree_path: Where the managed worktree would live
@@ -679,8 +686,9 @@ def _recover_stranded_branch(
     Raises:
         typer.Exit: When the chosen recovery cannot be completed
     """
+    repo = work.repo_name
     main_dirty = has_uncommitted_changes(repo_root)
-    target_branch = _resolve_switchback_branch(ticket, repo_root)
+    target_branch = _resolve_switchback_branch(work, repo_root)
 
     console.print(
         f"[yellow]Heads up:[/] branch '{branch}' is still checked out on the "
@@ -738,8 +746,7 @@ def _recover_stranded_branch(
 
 
 def _ensure_resume_worktree(
-    ticket: Ticket,
-    repo: str,
+    work: ParkedWork,
     repo_root: Path,
     branch: str,
 ) -> ResumeTarget | None:
@@ -749,12 +756,14 @@ def _ensure_resume_worktree(
     local branch, or from origin/<branch> when only the remote branch
     exists. Recovers a branch stranded on the main checkout after an
     interrupted park (prompting the user), and prunes stale worktree
-    registrations. Errors loudly when the directory is not a worktree, the
-    branch is held by another live worktree, or it exists nowhere.
+    registrations. When the branch exists neither locally nor on origin
+    (typically cross-dev — the parker never pushed it), falls back to a
+    fresh session in the main checkout rather than erroring. Errors loudly
+    only when the directory is not a worktree or the branch is held by
+    another live worktree.
 
     Args:
-        ticket: The ticket being resumed
-        repo: Repository name
+        work: The parked work being resumed
         repo_root: Path to the main repository root
         branch: Real branch name (may contain '/')
 
@@ -764,6 +773,7 @@ def _ensure_resume_worktree(
     Raises:
         typer.Exit: When the worktree or branch cannot be resolved
     """
+    repo = work.repo_name
     worktree_path = worktree_path_for_branch(repo, branch, LOCAL_WORKTREE_BASE)
     status = check_worktree_exists(
         worktree_name=branch,
@@ -802,7 +812,7 @@ def _ensure_resume_worktree(
                     prune_worktrees(cwd=repo_root)
                 elif resolved == repo_root.resolve():
                     return _recover_stranded_branch(
-                        ticket, repo, repo_root, branch, worktree_path
+                        work, repo_root, branch, worktree_path
                     )
                 elif resolved != worktree_path.resolve():
                     console.print(
@@ -834,37 +844,26 @@ def _ensure_resume_worktree(
                 cwd=repo_root,
             )
         else:
+            # The branch is on neither this machine nor origin. Most often
+            # the parker never pushed it (cross-dev resume): there is no code
+            # state to restore here, so launch a fresh session in the main
+            # checkout seeded from the ticket's "Where I left off" rather than
+            # erroring (docs/nsproject-park.md §7).
             console.print(
-                f"[red]Error:[/] Branch '{branch}' for ticket "
-                f"'{ticket.id}' exists neither locally nor on origin."
+                f"[yellow]Heads up:[/] branch '{branch}' for ticket "
+                f"'{work.id}' isn't on this machine or on origin "
+                "(the parked branch may not have been pushed)."
             )
             console.print(
-                "The branch may have been merged and deleted; "
-                "check the ticket before resuming."
+                "Starting a fresh session in the main checkout — read the "
+                'ticket\'s "Where I left off" to continue.'
             )
-            raise typer.Exit(1)
+            return ResumeTarget(path=repo_root, is_worktree=False, fresh=True)
     except RuntimeError as e:
         console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(1)
 
     return ResumeTarget(path=worktree_path, is_worktree=True)
-
-
-def _archive_ticket(ticket: Ticket) -> None:
-    """Soft-delete a ticket on resume — the work is no longer parked.
-
-    The ticket is moved to the `.resumed/` archive rather than deleted, so it
-    leaves the board but `vibe resume <id>` can still recover it after an
-    accidental close. The archive is pruned once its worktree is gone.
-
-    Args:
-        ticket: The ticket being resumed
-    """
-    if archive_resumed_ticket(ticket) is not None:
-        console.print(
-            f"Resumed ticket '{ticket.id}' — archived (recover it any time with "
-            f"'vibe resume {ticket.id}')."
-        )
 
 
 def _handle_resume(
@@ -876,14 +875,14 @@ def _handle_resume(
 ) -> None:
     """Handle 'vibe resume <ticket>': pick a piece of work back up.
 
-    Resume recreates or reuses the ticket's worktree, unwinds the park commit
-    only when the tip is this ticket's marker, launches the tool, and
-    soft-deletes the ticket (moves it to `.resumed/`). Re-resuming a recently
-    resumed ticket recovers it from that archive, so an accidental close is
-    recoverable.
+    Reads the parked-work snapshot from the NSProject board, reconstructs or
+    reuses the work branch's worktree, unwinds the park commit only when the
+    tip is this ticket's marker, launches the tool, and clears the board's
+    `parked_at` marker. When the branch isn't available locally (cross-dev),
+    launches a fresh session in the main checkout seeded from the handoff.
 
     Args:
-        ticket_id: Ticket id from the command line (None when omitted)
+        ticket_id: NSProject ticket id from the command line (None when omitted)
         oc: Whether --oc flag was provided
         codex: Whether --codex flag was provided
         claude: Whether --claude flag was provided
@@ -898,31 +897,28 @@ def _handle_resume(
         _print_available_tickets()
         raise typer.Exit(1)
 
-    # Drop stale archive entries whose work is already gone before looking up.
-    prune_resumed_archive(VIBEBOARD_DIR, LOCAL_WORKTREE_BASE)
+    board = find_board()
+    if board is None:
+        console.print("[red]Error:[/] Could not find the NSProject board.")
+        console.print(
+            "Set NSPROJECT_BOARD to the board root (the directory holding "
+            "CLAUDE.md and data/)."
+        )
+        raise typer.Exit(1)
 
-    # Prefer a live (parked) ticket; fall back to the resumed archive so a
-    # session closed right after resuming can be picked up again by id.
-    ticket = find_ticket(ticket_id, VIBEBOARD_DIR)
-    from_archive = False
-    if ticket is None:
-        ticket = find_resumed_ticket(ticket_id, VIBEBOARD_DIR)
-        from_archive = ticket is not None
-    if ticket is None:
-        console.print(f"[red]Error:[/] No ticket found with id '{ticket_id}'")
+    work = find_parked_work(ticket_id, board=board)
+    if work is None:
+        console.print(
+            f"[red]Error:[/] No resumable work found for ticket '{ticket_id}'"
+        )
         _print_available_tickets()
         raise typer.Exit(1)
-    if from_archive:
-        console.print(
-            f"Reconnecting to resumed ticket '{ticket.id}' from the archive..."
-        )
 
-    repo = ticket.repo
-    repo_root = LOCAL_REPO_BASE / repo
+    repo_root = work.repo_path
     if not repo_root.is_dir():
         console.print(
-            f"[red]Error:[/] Repository '{repo}' for ticket '{ticket.id}' "
-            f"not found at {repo_root}"
+            f"[red]Error:[/] Local checkout for ticket '{work.id}' not found "
+            f"at {repo_root}"
         )
         raise typer.Exit(1)
     if not validate_git_repo(repo_root):
@@ -934,33 +930,33 @@ def _handle_resume(
     remote_shell = None if local else _resolve_remote_shell()
     is_powershell = remote_shell == Shell.POWERSHELL
     tool_name, base_cmd = _resolve_resume_tool(
-        oc, codex, claude, ticket.tool, is_powershell
+        oc, codex, claude, work.tool, is_powershell
     )
 
-    branch = ticket.branch
+    branch = work.branch
     if branch is None:
-        # A parked ticket always records its branch; a ticket without one is
+        # A parked work entry always records its branch; one without is
         # malformed and cannot be resumed.
         console.print(
-            f"[red]Error:[/] Ticket '{ticket.id}' has no branch and cannot be "
-            "resumed (parked tickets always record a branch)."
+            f"[red]Error:[/] Ticket '{work.id}' has no recorded branch and "
+            "cannot be resumed (a parked work entry always records a branch)."
         )
         raise typer.Exit(1)
 
-    # Reuse or recreate the worktree, unwind only if the tip commit is this
-    # ticket's park marker (safe in every state).
-    target = _ensure_resume_worktree(ticket, repo, repo_root, branch)
+    # Reuse or recreate the worktree (or fall back to a fresh main-checkout
+    # session cross-dev); unwind only if the tip is this ticket's park marker.
+    target = _ensure_resume_worktree(work, repo_root, branch)
     if target is None:
         raise typer.Exit(1)  # user aborted recovery
-    _unwind_if_park_marker(target.path, ticket.id)
+    if not target.fresh:
+        _unwind_if_park_marker(target.path, work.id)
 
-    # Soft-delete the ticket: the work is now active, no longer parked. An
-    # already-archived ticket (recovered after an accidental close) stays put,
-    # so it remains recoverable if this session is closed again too.
-    if not from_archive:
-        _archive_ticket(ticket)
+    # The work is active again: clear the board's parked marker. Best-effort —
+    # a board write/push failure warns but never blocks the resume.
+    mark_resumed(work)
 
-    console.print(f"Resuming ticket '{ticket.id}' on branch '{branch}'...")
+    console.print(f"Resuming ticket '{work.id}' on branch '{branch}'...")
+    repo = work.repo_name
     if target.is_worktree:
         if local:
             def launch(command: str) -> int:
@@ -975,8 +971,9 @@ def _handle_resume(
                     remote_shell=remote_shell,
                 )
     else:
-        # Resuming on the main checkout: launch there like a branch-null
-        # session — no managed worktree, so no post-session cleanup.
+        # Resuming on the main checkout (stranded-branch in-place, or a
+        # cross-dev fresh start): no managed worktree, so no post-session
+        # cleanup.
         remote_main = REMOTE_REPO_BASE / repo
 
         if local:
@@ -991,7 +988,9 @@ def _handle_resume(
                     remote_shell=remote_shell,
                 )
 
-    exit_code = _launch_resume(ticket, tool_name, base_cmd, is_powershell, launch)
+    exit_code = _launch_resume(
+        work, tool_name, base_cmd, is_powershell, launch, seed_fresh=target.fresh
+    )
     if target.is_worktree:
         _run_post_session_cleanup(repo, branch, repo_root)
     raise typer.Exit(exit_code)
@@ -1005,7 +1004,7 @@ def main(
     branch: Optional[str] = typer.Argument(
         None,
         help="Branch name for the worktree. Creates worktree and connects to it. "
-        "Use the literal 'resume' to resume a Vibe Board ticket.",
+        "Use the literal 'resume' to resume an NSProject ticket.",
         autocompletion=complete_branches,
     ),
     ticket: Optional[str] = typer.Argument(
@@ -1062,8 +1061,8 @@ def main(
         vibe feature-branch --claude      # Create worktree, use Claude Code
         vibe feature-branch --oc          # Create worktree, use OpenCode
         vibe feature-branch --from main   # Create from main branch
-        vibe resume vibe-12               # Resume a Vibe Board ticket
-        vibe resume vibe-12 --local       # Resume a ticket locally
+        vibe resume BZL_q7m2x             # Resume parked work from the NSProject board
+        vibe resume BZL_q7m2x --local     # Resume parked work locally
         vibe --cli                        # SSH to home directory
         vibe --cli feature-branch         # Create worktree, SSH shell only
         vibe --local feature-branch       # Work locally (prompts for tool)
@@ -1086,7 +1085,7 @@ def main(
         raise typer.Exit(1)
 
     # Handle 'vibe resume <ticket>' — the literal 'resume' as first
-    # positional routes to the Vibe Board resume flow
+    # positional routes to the NSProject resume flow
     if branch == "resume":
         _handle_resume(ticket, oc=oc, codex=codex, claude=claude, local=local)
         return  # pragma: no cover — _handle_resume always raises typer.Exit

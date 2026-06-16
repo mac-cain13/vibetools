@@ -297,7 +297,7 @@ def unwind_park_commit(worktree_path: Path) -> bool:
 
     A mixed 'git reset HEAD~1' restores the commit's contents as
     working-directory changes: tracked changes return unstaged and
-    previously-untracked files reappear (vibeboard-format.md section 8).
+    previously-untracked files reappear (docs/nsproject-park.md §4).
     Callers must verify the tip commit is the park marker before calling.
 
     Args:

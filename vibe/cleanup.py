@@ -6,57 +6,22 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from vibe.config import LOCAL_WORKTREE_BASE, VIBEBOARD_DIR
+from vibe.config import JUNK_FILES, LOCAL_WORKTREE_BASE
 from vibe.git_ops import (
     get_git_common_dir,
     get_repo_info,
+    get_tip_commit_subject,
     get_worktree_list,
     has_uncommitted_changes,
     validate_git_repo,
     worktree_dirname_to_branch,
     worktree_path_for_branch,
 )
-from rich.markup import escape
-
-from vibe.config import JUNK_FILES
-from vibe.tickets import (
-    find_ticket_by_repo_branch,
-    list_resumed_tickets,
-    update_ticket_fields,
-)
 from vibe.utils import console, is_directory_empty, is_junk_file
 
-
-def prune_resumed_archive(
-    store_dir: Path = VIBEBOARD_DIR,
-    worktree_base: Path = LOCAL_WORKTREE_BASE,
-) -> int:
-    """Remove `.resumed/` archive entries whose worktree no longer exists.
-
-    A soft-deleted (resumed) ticket is recoverable only while its work is
-    still around; once the worktree is gone (the work was finished and the
-    worktree cleaned up), the archived ticket is stale and is pruned.
-
-    Args:
-        store_dir: Ticket store directory
-        worktree_base: Base directory for worktrees
-
-    Returns:
-        The number of archived tickets pruned.
-    """
-    pruned = 0
-    for ticket in list_resumed_tickets(store_dir):
-        branch = ticket.branch
-        if branch is None:
-            continue
-        worktree_path = worktree_path_for_branch(ticket.repo, branch, worktree_base)
-        if not worktree_path.exists():
-            try:
-                ticket.path.unlink(missing_ok=True)
-                pruned += 1
-            except OSError:
-                pass
-    return pruned
+# Subject-line prefix of the park commit (docs/nsproject-park.md §4). A
+# worktree whose tip carries it was parked; post-session cleanup removes it.
+PARK_MARKER_PREFIX = "wip: park "
 
 
 @dataclass
@@ -164,66 +129,56 @@ def post_session_cleanup(
     branch: str,
     repo_root: Path,
     worktree_base: Path = LOCAL_WORKTREE_BASE,
-    store_dir: Path = VIBEBOARD_DIR,
 ) -> None:
-    """Remove a session's worktree after exit when its ticket was parked.
+    """Remove a session's worktree after exit when the session was parked.
 
-    Re-reads the ticket fresh (matched by repo + branch) and removes the
-    worktree only when the ticket's state is 'on_hold' and the worktree is
-    clean. Never uses --force: a dirty worktree is skipped loudly. A
-    successful removal clears the ticket's worktree field. Silent no-op
-    when no ticket matches the repo + branch pair.
+    A parked session leaves the worktree's tip commit as the park marker
+    ('wip: park <id>', docs/nsproject-park.md §4/§7). When the tip carries
+    that marker and the tree is clean, the worktree is removed (it is
+    reconstructed from the branch on resume). This is a purely local check —
+    no board access. Never uses --force: a dirty worktree is skipped loudly,
+    and a non-parked session keeps its worktree.
 
     Args:
         repo_name: Name of the repository
         branch: Real branch name of the session's worktree
         repo_root: Path to the main repository root
         worktree_base: Base directory for worktrees
-        store_dir: Vibe Board ticket store directory
     """
-    ticket = find_ticket_by_repo_branch(repo_name, branch, store_dir)
-    if ticket is None or ticket.state != "on_hold":
-        return
-
     worktree_path = worktree_path_for_branch(repo_name, branch, worktree_base)
     if not worktree_path.is_dir():
         return
 
+    subject = get_tip_commit_subject(worktree_path)
+    if subject is None or not subject.strip().startswith(PARK_MARKER_PREFIX):
+        return  # not a parked session — leave the worktree in place
+
     if has_uncommitted_changes(worktree_path):
         console.print(
-            f"[yellow]Warning:[/] Ticket '{escape(ticket.id)}' is on hold "
-            f"but worktree '{branch}' has uncommitted changes — leaving it "
-            "in place. Park again or clean it up manually."
+            f"[yellow]Warning:[/] worktree '{branch}' is parked but has "
+            "uncommitted changes — leaving it in place. Park again or clean "
+            "it up manually."
         )
         return
 
     remove_status = remove_worktree(worktree_path, repo_root)
     if remove_status in (RemoveResult.REMOVED, RemoveResult.REMOVED_WITH_PARENT):
-        console.print(
-            f"Removed parked worktree for ticket '{escape(ticket.id)}' "
-            f"({branch})"
-        )
-        update_ticket_fields(ticket.path, {"worktree": None})
+        console.print(f"Removed parked worktree '{branch}'")
     else:
         console.print(
-            f"[yellow]Warning:[/] Failed to remove worktree '{branch}' "
-            f"for on-hold ticket '{escape(ticket.id)}'"
+            f"[yellow]Warning:[/] Failed to remove parked worktree '{branch}'"
         )
 
 
 def clean_all_worktrees(
     worktree_base: Path = LOCAL_WORKTREE_BASE,
-    store_dir: Path = VIBEBOARD_DIR,
 ) -> CleanupStats:
     """Clean all worktrees across all repositories.
 
-    Worktrees with uncommitted changes are skipped (never `--force`); when a
-    removed worktree has a matching parked ticket, that ticket's worktree
-    field is cleared.
+    Worktrees with uncommitted changes are skipped (never `--force`).
 
     Args:
         worktree_base: Base directory containing worktrees
-        store_dir: Vibe Board ticket store directory
 
     Returns:
         CleanupStats with counts of cleaned, skipped, etc.
@@ -277,9 +232,6 @@ def clean_all_worktrees(
                 valid_worktree_paths.add(worktree_path)
                 # Display the decoded branch name, not the encoded dirname
                 worktree_name = worktree_dirname_to_branch(worktree_path.name)
-                ticket = find_ticket_by_repo_branch(
-                    repo_name, worktree_name, store_dir
-                )
 
                 # Print repo header only when we find the first item
                 if not repo_has_output:
@@ -300,11 +252,6 @@ def clean_all_worktrees(
                     else:
                         console.print(f"  [red]✗[/] {worktree_name} — failed")
                         stats.failed += 1
-                    if (
-                        remove_status != RemoveResult.FAILED
-                        and ticket is not None
-                    ):
-                        update_ticket_fields(ticket.path, {"worktree": None})
 
         # Now clean up any lingering directories that aren't valid worktrees
         # Check if repo_dir still exists (might have been removed with last worktree)
@@ -340,9 +287,6 @@ def clean_all_worktrees(
             except OSError:
                 pass
 
-    # Drop archived (resumed) tickets whose worktree is now gone.
-    prune_resumed_archive(store_dir=store_dir, worktree_base=worktree_base)
-
     console.print()
     summary_parts = []
     if stats.cleaned > 0:
@@ -367,12 +311,10 @@ def clean_specific_worktree(
     repo_name: str,
     repo_root: Path,
     worktree_base: Path = LOCAL_WORKTREE_BASE,
-    store_dir: Path = VIBEBOARD_DIR,
 ) -> bool:
     """Clean a specific worktree.
 
-    Worktrees with uncommitted changes are skipped (never `--force`). On
-    success, a matching parked ticket's worktree field is cleared.
+    Worktrees with uncommitted changes are skipped (never `--force`).
 
     Args:
         worktree_name: Branch name of the worktree to clean (the on-disk
@@ -380,7 +322,6 @@ def clean_specific_worktree(
         repo_name: Name of the repository
         repo_root: Path to the repository root
         worktree_base: Base directory for worktrees
-        store_dir: Vibe Board ticket store directory
 
     Returns:
         True if successfully cleaned, False otherwise
@@ -407,9 +348,6 @@ def clean_specific_worktree(
         console.print("  Please commit or stash changes first")
         return False
 
-    # Look up the matching parked ticket so its worktree field can be cleared.
-    ticket = find_ticket_by_repo_branch(repo_name, worktree_name, store_dir)
-
     # Remove the worktree
     remove_status = remove_worktree(worktree_path, repo_root)
 
@@ -422,6 +360,4 @@ def clean_specific_worktree(
     else:
         console.print(f"[green]●[/] {worktree_name} — cleaned")
 
-    if ticket is not None:
-        update_ticket_fields(ticket.path, {"worktree": None})
     return True

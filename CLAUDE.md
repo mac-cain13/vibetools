@@ -40,7 +40,7 @@ python3 -m vibe                         # Connect to current repo/worktree (prom
 python3 -m vibe feature-branch --codex  # Use Codex
 python3 -m vibe feature-branch --claude # Use Claude Code
 python3 -m vibe feature-branch --oc     # Use OpenCode
-python3 -m vibe resume vibe-12          # Resume a Vibe Board ticket
+python3 -m vibe resume BZL_q7m2x        # Resume parked work from the NSProject board
 ```
 
 ## Project Structure
@@ -55,7 +55,7 @@ vibe/
 ├── connection.py    # SSH and local connection handling
 ├── cleanup.py       # Worktree cleanup operations (incl. post-session cleanup)
 ├── git_ops.py       # Git operations (worktree, branch management)
-├── tickets.py       # Vibe Board ticket store (lenient read, field-preserving write)
+├── nsproject.py     # NSProject board reader for parked work (find/parse work[], resume write)
 └── utils.py         # Shared utilities (console, formatting)
 
 tests/
@@ -63,29 +63,31 @@ tests/
 ├── test_cleanup.py          # Cleanup module tests
 ├── test_connection.py       # Connection module tests
 ├── test_git_ops.py          # Git operations tests
+├── test_nsproject.py        # NSProject board store tests (parse, resolve, mark_resumed)
 ├── test_platform.py         # Platform detection tests
-├── test_resume.py           # 'vibe resume' worktree-recovery + launch tests
-└── test_tickets.py          # Ticket store tests
+└── test_resume.py           # 'vibe resume' worktree-recovery + launch tests
 
-docs/                  # Specs (vibeboard-format.md — the ticket store contract)
+docs/                  # Specs (nsproject-park.md — the park/resume store contract)
 skills/                # Claude Code skills (the 'park' skill — skills/park)
-VibeBoard/             # Native Mac app (menubar list of parked tickets)
 vm-setup/              # macOS VM setup (tart)
 vm-setup-windows/      # Windows/Hyper-V/WSL VM setup
 ```
+
+Parked work lives on the **NSProject board** (a separate sibling repo), not in a
+flat store — `vibe` reads it via `vibe/nsproject.py`; the `park` skill writes it.
 
 ## Key Files
 
 - `vibe/platform.py` - Platform detection (macOS vs WSL), override with `VIBE_PLATFORM=wsl`
 - `vibe/config.py` - All configurable constants (SSH key path, remote host, worktree paths) — platform-conditional
 - `vibe/cli.py` - Main entry point, handles all CLI flags and routing
-- `vibe/tickets.py` - Vibe Board ticket store reader/writer (see `docs/vibeboard-format.md` for the normative format spec)
+- `vibe/nsproject.py` - NSProject board reader for parked work (see `docs/nsproject-park.md` for the normative store contract)
 - `pyproject.toml` - Project metadata, dependencies, and tool configuration
 
 ## Testing Requirements
 
 - **Always run tests** before considering work complete
-- Target: All 96+ tests passing
+- Target: all tests passing
 - Coverage target: >80%
 - Tests use `pytest` with `pytest-cov` for coverage
 - Mock external calls (subprocess, file system) in tests

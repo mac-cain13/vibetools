@@ -74,8 +74,8 @@ vibe --cli
 # Work locally instead of SSH
 vibe --local feature-branch --claude
 
-# Resume a Vibe Board ticket (recreates the worktree, relaunches the tool)
-vibe resume vibe-12
+# Resume parked work from the NSProject board (recreates the worktree, relaunches the tool)
+vibe resume BZL_q7m2x
 
 # Clean up a specific worktree
 vibe --clean feature-branch
@@ -84,22 +84,25 @@ vibe --clean feature-branch
 vibe --clean
 ```
 
-### Vibe Board
+### Park & resume (NSProject board)
 
-`vibe resume <ticket-id>` picks parked work back up from the Vibe Board — a
-durable registry of **parked (on-hold)** work, one markdown ticket per file in
-`<repo-base>/_vibeboard`. A ticket exists only while its work is parked: the
-`park` skill creates it; resume deletes it. Resume recreates (or reuses) the
-ticket's worktree, unwinds the park commit when the tip is this ticket's
-`wip: park <id>` marker, relaunches the recorded coding tool (resuming the
-Claude session when one is recorded), and soft-deletes the ticket — it moves to
-a hidden `.resumed/` archive so the board clears, but `vibe resume <id>` can
-still recover it (so an accidental close right after resuming is recoverable).
-When a parked session exits, vibe removes the worktree, and
-`vibe --clean` is a backstop sweep (worktrees with uncommitted changes are
-skipped). A menubar Mac app (`VibeBoard/`) lists parked tickets and opens a
-floating window to read and comment on each. The on-disk ticket format is
-specified in [docs/vibeboard-format.md](docs/vibeboard-format.md).
+`vibe resume <ticket-id>` picks parked work back up from the **NSProject board**
+— the two-person team's Markdown-in-Git project board (`<CODE>_<hash>` ticket
+ids like `BZL_q7m2x`). Parking is handled by the `park` skill: it captures the
+current work as a `wip: park <id>` commit on the work branch (local only, never
+pushed), records a `work[]` entry on the ticket (branch, session, tool,
+`parked_at`) and rewrites the ticket's `## Where I left off` handoff. Resume
+reconstructs (or reuses) the work branch's worktree, unwinds the park commit
+when the tip is this ticket's `wip: park <id>` marker, relaunches the recorded
+coding tool (resuming the Claude session when one is recorded and local), and
+clears the board's `parked_at` marker. When the branch isn't available on this
+machine (cross-dev — the parker never pushed it), resume launches a fresh
+session in the main checkout seeded from the ticket's `## Where I left off`.
+When a parked session exits, vibe removes the worktree (it is reconstructed on
+resume); `vibe --clean` is a backstop sweep (worktrees with uncommitted changes
+are skipped). The on-disk contract is specified in
+[docs/nsproject-park.md](docs/nsproject-park.md); the board itself (folders,
+ticket schema, the macOS Kanban app) is the separate NSProject repo.
 
 ### Context-Aware Behavior
 
@@ -140,7 +143,7 @@ Arguments:
   BRANCH    Branch name for the worktree. Creates worktree and connects to it.
             Supports origin/branch syntax for remote branches.
             If omitted, connects to current repo/worktree context.
-            The literal 'resume' resumes a Vibe Board ticket instead.
+            The literal 'resume' resumes an NSProject ticket instead.
   TICKET    Ticket id for 'vibe resume <ticket>'. Only valid after 'resume'.
 
 Options:

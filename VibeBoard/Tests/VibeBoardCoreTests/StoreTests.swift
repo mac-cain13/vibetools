@@ -164,6 +164,38 @@ final class StoreTests: XCTestCase {
                        "vibe resume 'weird id; rm -rf'")
         XCTAssertEqual(ResumeCommand.shellQuote("it's"), "'it'\\''s'")
     }
+
+    func testTmuxResumeAllCommandOpensWindowPerTicketWithCdAndLiveShell() {
+        let command = ResumeCommand.tmuxResumeAllCommand(for: [
+            .init(ticketID: "vibe-12", worktreePath: "/work/vibe/vibe-12"),
+            .init(ticketID: "vibe-9", worktreePath: "/work/vibe/vibe-9"),
+        ])
+        XCTAssertEqual(command, """
+        tmux new-window -n vibe-12 'cd /work/vibe/vibe-12; vibe resume vibe-12; exec $SHELL'
+        tmux new-window -n vibe-9 'cd /work/vibe/vibe-9; vibe resume vibe-9; exec $SHELL'
+        """)
+    }
+
+    func testTmuxResumeAllCommandOmitsCdWhenNoWorktree() {
+        let command = ResumeCommand.tmuxResumeAllCommand(for: [
+            .init(ticketID: "vibe-12", worktreePath: nil),
+        ])
+        XCTAssertEqual(command, "tmux new-window -n vibe-12 'vibe resume vibe-12; exec $SHELL'")
+    }
+
+    func testTmuxResumeAllCommandQuotesUnsafePathForInnerShell() {
+        let command = ResumeCommand.tmuxResumeAllCommand(for: [
+            .init(ticketID: "vibe-12", worktreePath: "/work/my repo/vibe-12"),
+        ])
+        // The space-bearing path is single-quoted for tmux's inner shell, and the
+        // whole inner command is quoted again for the paste shell.
+        XCTAssertEqual(command,
+                       "tmux new-window -n vibe-12 'cd '\\''/work/my repo/vibe-12'\\''; vibe resume vibe-12; exec $SHELL'")
+    }
+
+    func testTmuxResumeAllCommandIsEmptyForNoTickets() {
+        XCTAssertEqual(ResumeCommand.tmuxResumeAllCommand(for: []), "")
+    }
 }
 
 extension StoreTests {

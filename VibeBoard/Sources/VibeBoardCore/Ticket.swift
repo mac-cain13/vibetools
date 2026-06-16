@@ -122,6 +122,84 @@ public struct Ticket: Identifiable, Hashable, Sendable {
         return paragraph.isEmpty ? nil : paragraph.joined(separator: " ")
     }
 
+    // MARK: - Park-owned body sections
+
+    /// Heading text of the human braindump section park captures from the
+    /// `/park` invocation (spec section 7). Matched case-insensitively on read.
+    public static let braindumpHeading = "Braindump"
+
+    /// Heading text of the agent's next-step section park writes (spec
+    /// section 7). Matched case-insensitively on read.
+    public static let nextStepHeading = "Next step"
+
+    /// The human's braindump — the content under `## Braindump` — or `nil` when
+    /// the ticket was parked without one.
+    public var braindump: String? { bodySection(named: Ticket.braindumpHeading) }
+
+    /// The agent's parked-context note — the content under `## Next step` — or
+    /// `nil` when absent.
+    public var nextStep: String? { bodySection(named: Ticket.nextStepHeading) }
+
+    /// The freeform remainder of the body with the park-owned `## Braindump` and
+    /// `## Next step` sections removed, or `nil` when nothing is left. This is
+    /// the human's general notes, shown and edited separately from the two
+    /// park-owned sections.
+    public var freeformNotes: String? {
+        let owned: Set<String> = [
+            Ticket.braindumpHeading.lowercased(),
+            Ticket.nextStepHeading.lowercased(),
+        ]
+        var skipping = false
+        var kept: [String] = []
+        for line in body.components(separatedBy: "\n") {
+            if let title = Ticket.h2Title(of: line) {
+                skipping = owned.contains(title.lowercased())
+                if skipping { continue } // drop the heading line of owned sections
+                kept.append(line)        // keep other section headings verbatim
+                continue
+            }
+            if !skipping { kept.append(line) }
+        }
+        let text = kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// Returns the trimmed content under a level-2 (`## `) heading, or `nil` when
+    /// the heading is absent or its section is empty. The section runs from its
+    /// heading to the next `## ` heading or the end of the body.
+    ///
+    /// - Parameter name: The heading text to match (case-insensitive).
+    /// - Returns: The section's content, or `nil`.
+    internal func bodySection(named name: String) -> String? {
+        var found = false
+        var capturing = false
+        var captured: [String] = []
+        for line in body.components(separatedBy: "\n") {
+            if let title = Ticket.h2Title(of: line) {
+                if capturing { break } // the next section ends ours
+                if title.caseInsensitiveCompare(name) == .orderedSame {
+                    found = true
+                    capturing = true
+                }
+                continue
+            }
+            if capturing { captured.append(line) }
+        }
+        guard found else { return nil }
+        let text = captured.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// The title of a level-2 Markdown heading line (`## Title`), or `nil` when
+    /// the line is not exactly an h2. Used to split the body into sections.
+    ///
+    /// - Parameter line: A single body line.
+    /// - Returns: The trimmed heading title, or `nil`.
+    internal static func h2Title(of line: String) -> String? {
+        guard line.hasPrefix("## ") else { return nil }
+        return String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+    }
+
     // MARK: - Helpers
 
     /// Recovers the repository name from a ticket id by stripping the trailing

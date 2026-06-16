@@ -28,6 +28,16 @@ struct ProjectTag: View {
 
     /// A vivid, stable color for this project, readable against white text.
     private var tagColor: Color {
-        Color(hue: ProjectColor.hue(for: project), saturation: 0.58, brightness: 0.80)
+        .project(project)
+    }
+}
+
+extension Color {
+
+    /// The vivid, stable color for a project (repository) name, readable against
+    /// white text. Shared by the ticket tag and the menubar section header so a
+    /// project looks the same everywhere it appears.
+    static func project(_ name: String) -> Color {
+        Color(hue: ProjectColor.hue(for: name), saturation: 0.58, brightness: 0.80)
     }
 }

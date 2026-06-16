@@ -6,9 +6,11 @@
 # bare `swift run VibeBoard` executable has no bundle id, so notifications no-op
 # there by design -- use this bundle to get them.
 #
+# After building, this quits any running instance and launches the fresh build.
+#
 # Usage:
-#   ./build-app.sh            # release build -> .build/VibeBoard.app
-#   ./build-app.sh && open .build/VibeBoard.app
+#   ./build-app.sh            # release build -> .build/VibeBoard.app, then launch
+#   ./build-app.sh debug      # debug build
 
 set -euo pipefail
 
@@ -29,6 +31,28 @@ if [[ ! -x "${BIN}" ]]; then
 	exit 1
 fi
 
+# Quit any running instance BEFORE reassembling the bundle: a running app holds
+# its executable busy, so `rm -rf` of the .app would fail (and on this SMB volume
+# leaves `.smbdelete` stragglers). Quitting first lets us overwrite cleanly and
+# guarantees `open` launches the fresh binary rather than no-op'ing on the
+# already-running menubar app.
+#
+# A plain SIGTERM (pkill's default) is used rather than an AppleScript `quit`:
+# scripting another app needs macOS Automation (TCC) permission, and without it
+# `osascript … to quit` blocks indefinitely on the approval prompt. SIGTERM needs
+# no permission and AppKit exits cleanly on it; SIGKILL is a last-resort fallback.
+if pgrep -x VibeBoard >/dev/null 2>&1; then
+	echo "Quitting running VibeBoard..."
+	pkill -x VibeBoard >/dev/null 2>&1 || true
+	# Wait up to ~3s for a graceful exit, then force-kill any straggler so the
+	# bundle is free to overwrite.
+	for _ in $(seq 1 15); do
+		pgrep -x VibeBoard >/dev/null 2>&1 || break
+		sleep 0.2
+	done
+	pkill -9 -x VibeBoard >/dev/null 2>&1 || true
+fi
+
 echo "Assembling ${APP} ..."
 rm -rf "${APP}"
 mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
@@ -40,7 +64,7 @@ codesign --force --sign - \
 	--entitlements "${SCRIPT_DIR}/VibeBoard.entitlements" \
 	"${APP}"
 
-echo ""
 echo "Built ${APP}"
-echo "Run it with:  open \"${APP}\""
+echo "Launching ${APP} ..."
+open "${APP}"
 echo "(First launch asks to allow notifications.)"

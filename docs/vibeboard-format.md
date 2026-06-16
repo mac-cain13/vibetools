@@ -66,6 +66,10 @@ state: on_hold
 
 Freeform body.
 
+## Braindump
+
+Auth on the v2 API is flaky — maybe just pin v1 and move on.
+
 ## Next step
 
 Wire the backoff cap into the retry loop, then rerun the upload tests.
@@ -126,8 +130,8 @@ like any other unknown key (§5.2) — never strip it.
 4. **Timestamps:** UTC, second precision, `YYYY-MM-DDTHH:MM:SSZ`. Refresh
    `updated` on every write.
 5. **Never delete or rewrite body content you don't own.** The park ritual owns
-   the `## Next step` section (§7); everything else in the body is appended to
-   or left alone.
+   the `## Braindump` and `## Next step` sections (§7); everything else in the
+   body is appended to or left alone.
 
 ## 6. Reader rules (lenient parsing — hard requirement)
 
@@ -154,13 +158,24 @@ like any other unknown key (§5.2) — never strip it.
 
 - The body is freeform Markdown: background, notes, links, and the human's
   comments on the parked work.
-- **`## Next step`** — a section heading owned by the park ritual. Park writes
-  it (creating the section if missing, replacing its content if present) with
-  what to do next, why the work is parked, and any loud warnings (e.g. "local
-  `main` carries N commits belonging to this ticket"). Resume's bootstrap
-  prompt points the agent at this section.
-- The Mac app's notes editor edits the rest of the body (the human's comments);
-  it leaves `## Next step` to park.
+Park owns **two** section headings. For each, park creates the section if
+missing and replaces its content if present, leaving the rest of the body alone.
+When both are present, `## Braindump` precedes `## Next step`.
+
+- **`## Braindump`** — the human's own words, captured by park from what the
+  user said when invoking it: what this work is and what they think should
+  happen on resume. **Optional** — park writes it only when the user gave a
+  braindump, and omits the section entirely otherwise (parking without a
+  braindump is normal). It holds the human's voice, never the agent's analysis.
+- **`## Next step`** — the agent's dump: the context the next session needs and
+  what to do next, plus any loud warnings (e.g. "local `main` carries N commits
+  belonging to this ticket"). Resume's bootstrap prompt points the agent at this
+  section.
+
+Readers match these headings case-insensitively and treat the section as
+running from its heading to the next `## ` heading (or end of body). The Mac app
+surfaces `## Braindump` and `## Next step` as distinct, labeled blocks and shows
+the freeform remainder (the human's general comments) separately.
 
 ## 8. Park marker and unwind
 

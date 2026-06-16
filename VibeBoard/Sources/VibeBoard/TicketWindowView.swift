@@ -102,7 +102,7 @@ struct TicketEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            notesSection
+            bodyArea
             footer
         }
         .padding(16)
@@ -154,12 +154,14 @@ struct TicketEditorView: View {
         }
     }
 
-    /// The body section: a rendered Markdown preview, or a plain-text editor
-    /// when editing the comment.
-    private var notesSection: some View {
+    /// The body area: in read mode, the park-owned Braindump and Next step
+    /// sections as distinct cards plus the freeform notes; in edit mode, the
+    /// whole raw Markdown body in a plain-text editor. The Edit toggle swaps
+    /// between them.
+    private var bodyArea: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Notes")
+                Text(editingNotes ? "Edit body" : "Details")
                     .font(.headline)
                 Spacer()
                 Toggle("Edit", isOn: $editingNotes)
@@ -175,20 +177,39 @@ struct TicketEditorView: View {
                             .stroke(Color.secondary.opacity(0.3))
                     )
             } else {
-                ScrollView {
-                    Text(renderedBody)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding(8)
-                }
-                .frame(minHeight: 220)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(nsColor: .textBackgroundColor))
-                )
+                readModeSections
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// Read-mode body: the human braindump and agent next-step cards (each shown
+    /// only when present), followed by the freeform notes. Falls back to a
+    /// placeholder when the ticket has no body content at all.
+    private var readModeSections: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                if let braindump = ticket.braindump {
+                    TicketSectionCard(title: "Braindump", attribution: "you",
+                                      systemImage: "person.fill", accent: .blue,
+                                      content: Self.renderMarkdown(braindump))
+                }
+                if let nextStep = ticket.nextStep {
+                    TicketSectionCard(title: "Next step", attribution: "AI",
+                                      systemImage: "sparkles", accent: .purple,
+                                      content: Self.renderMarkdown(nextStep))
+                }
+                let notes = ticket.freeformNotes
+                if notes != nil || ticket.braindump == nil && ticket.nextStep == nil {
+                    TicketSectionCard(title: "Notes", attribution: nil,
+                                      systemImage: "note.text", accent: .secondary,
+                                      content: Self.renderMarkdown(notes ?? "No notes yet."))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 4)
+        }
+        .frame(minHeight: 220)
     }
 
     /// The action row: copy resume command, and save-notes when editing.
@@ -213,10 +234,12 @@ struct TicketEditorView: View {
         }
     }
 
-    /// The body rendered as Markdown, falling back to plain text when the
-    /// Markdown cannot be parsed. Empty bodies show a placeholder.
-    private var renderedBody: AttributedString {
-        let text = bodyText.isEmpty ? "No notes yet." : bodyText
+    /// Renders Markdown text to an `AttributedString`, falling back to plain
+    /// text when it cannot be parsed.
+    ///
+    /// - Parameter text: The Markdown source.
+    /// - Returns: The rendered attributed string.
+    static func renderMarkdown(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
@@ -270,5 +293,59 @@ struct TicketEditorView: View {
         pasteboard.clearContents()
         pasteboard.setString(command, forType: .string)
         copiedToClipboard = true
+    }
+}
+
+/// A titled card for one part of a ticket's body — the human braindump, the
+/// agent's next step, or the freeform notes. Shows an icon, a title, an optional
+/// "you"/"AI" attribution tag, and the rendered Markdown content, framed so the
+/// two park-owned sections read as distinct blocks.
+struct TicketSectionCard: View {
+
+    /// The card's title (e.g. "Braindump", "Next step", "Notes").
+    let title: String
+
+    /// Who authored this section ("you" / "AI"), or `nil` to omit the tag.
+    let attribution: String?
+
+    /// SF Symbol shown beside the title.
+    let systemImage: String
+
+    /// Accent color for the icon, title, and attribution tag.
+    let accent: Color
+
+    /// The rendered Markdown body of the section.
+    let content: AttributedString
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Label(title, systemImage: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(accent)
+                if let attribution {
+                    Text(attribution)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(accent.opacity(0.15)))
+                }
+                Spacer()
+            }
+            Text(content)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(accent.opacity(0.25))
+        )
     }
 }

@@ -48,6 +48,11 @@ updated: 2026-06-10T14:30:00Z
 
 Freeform body (background, the human's comments).
 
+## Braindump
+
+What the human told you to keep in mind for next time, in their words —
+omitted entirely when they parked without one.
+
 ## Next step
 
 Wire the backoff cap into the retry loop, then rerun the upload tests.
@@ -76,9 +81,16 @@ Body conventions:
 
 - The body is freeform Markdown: background, notes, and the human's comments
   (added later in the Mac app).
-- **`## Next step`** is owned by the park ritual: park creates the section if
-  missing or replaces its content if present, and leaves the rest of the body
-  alone.
+- The park ritual owns **two** sections; it creates each if missing or replaces
+  its content if present, and leaves the rest of the body alone:
+  - **`## Braindump`** — the human's own words about what this is and what they
+    think should happen next, captured from what they said when invoking park.
+    Write it **only when the human gave a braindump**; when they parked without
+    one, omit the section entirely (and on a re-park with no new braindump,
+    leave any existing `## Braindump` untouched — never invent or paraphrase it).
+  - **`## Next step`** — your dump: the context the next session needs and what
+    to do next (plus any loud warnings). This is yours, not the human's.
+  - When both are present, `## Braindump` comes first, then `## Next step`.
 - Park commit marker, exactly: **`wip: park <id>`** (e.g. `wip: park vibe-12`).
 
 ## Reading tickets (lenient — never crash on a ticket)
@@ -252,6 +264,13 @@ session exits). Steps, in order:
 
 5. **Write the note and create/update the ticket.** This is the auto-capture
    that makes resume cheap — you have the context now; the next session will not.
+   - **Capture the human's braindump.** If the human gave any guidance when
+     asking to park — what this work is, what they think should happen on resume,
+     things to remember — write it (in their words/spirit) as the **`## Braindump`**
+     section, above `## Next step`. If they parked with no such guidance, omit
+     the section; on a re-park with no new braindump, leave any existing one
+     untouched. Never fabricate a braindump or move your own analysis into it —
+     `## Braindump` is the human's voice, `## Next step` is yours.
    - Write the **`## Next step`** section (in a new ticket's body, or replacing
      it in an existing one): what to do next, why the work is parked, and any
      loud warnings (dropped gitignored files, "`main` carries N commits

@@ -301,6 +301,108 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(ticket.cardDescription, "The blurb.")
     }
 
+    // MARK: - Park-owned body sections (spec section 7)
+
+    func testExtractsBraindumpAndNextStepSections() {
+        let ticket = parse("""
+        ---
+        id: vibe-12
+        ---
+
+        Some background the agent wrote.
+
+        ## Braindump
+
+        Tried the v2 upload API but its auth is flaky.
+        Maybe just pin v1.
+
+        ## Next step
+
+        Context: client times out on slow networks.
+        Wire the backoff cap, then rerun the tests.
+        """)
+        XCTAssertEqual(ticket.braindump,
+                       "Tried the v2 upload API but its auth is flaky.\nMaybe just pin v1.")
+        XCTAssertEqual(ticket.nextStep,
+                       "Context: client times out on slow networks.\nWire the backoff cap, then rerun the tests.")
+        XCTAssertEqual(ticket.freeformNotes, "Some background the agent wrote.")
+    }
+
+    func testBraindumpIsNilWhenAbsent() {
+        let ticket = parse("""
+        ---
+        id: vibe-12
+        ---
+
+        Background.
+
+        ## Next step
+
+        Do the thing.
+        """)
+        XCTAssertNil(ticket.braindump)
+        XCTAssertEqual(ticket.nextStep, "Do the thing.")
+        XCTAssertEqual(ticket.freeformNotes, "Background.")
+    }
+
+    func testFreeformNotesIsNilWhenBodyIsOnlyParkSections() {
+        let ticket = parse("""
+        ---
+        id: vibe-12
+        ---
+
+        ## Braindump
+
+        My thoughts.
+
+        ## Next step
+
+        The next step.
+        """)
+        XCTAssertEqual(ticket.braindump, "My thoughts.")
+        XCTAssertEqual(ticket.nextStep, "The next step.")
+        XCTAssertNil(ticket.freeformNotes)
+    }
+
+    func testSectionHeadingMatchIsCaseInsensitiveAndSectionRunsToNextHeading() {
+        let ticket = parse("""
+        ---
+        id: vibe-12
+        ---
+
+        ## BRAINDUMP
+
+        Line one.
+
+        ### A subheading stays inside the section
+
+        Line two.
+
+        ## Next step
+
+        Next.
+        """)
+        XCTAssertEqual(ticket.braindump,
+                       "Line one.\n\n### A subheading stays inside the section\n\nLine two.")
+        XCTAssertEqual(ticket.nextStep, "Next.")
+    }
+
+    func testEmptyParkSectionReadsAsNil() {
+        let ticket = parse("""
+        ---
+        id: vibe-12
+        ---
+
+        ## Braindump
+
+        ## Next step
+
+        Only the next step has content.
+        """)
+        XCTAssertNil(ticket.braindump)
+        XCTAssertEqual(ticket.nextStep, "Only the next step has content.")
+    }
+
     // MARK: - Unknown keys
 
     func testUnknownKeysAreExposedNotFatal() {

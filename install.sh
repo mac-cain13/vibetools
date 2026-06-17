@@ -67,8 +67,29 @@ else
 fi
 echo ""
 
-# Step 3: Verify installation
-echo "Step 3: Verifying installation..."
+# Step 3: Deploy Claude Code skills
+echo "Step 3: Deploying Claude Code skills..."
+SKILLS_SRC="$SCRIPT_DIR/skills"
+SKILLS_DST="$HOME/.claude/skills"
+if [ -d "$SKILLS_SRC" ]; then
+    mkdir -p "$SKILLS_DST"
+    for skill_dir in "$SKILLS_SRC"/*/; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        link="$SKILLS_DST/$skill_name"
+        # Symlink so the installed skill always tracks the repo source
+        # (a copy would silently go stale on the next skill change).
+        rm -rf "$link"
+        ln -s "${skill_dir%/}" "$link"
+        echo "  ✓ linked skill '$skill_name'"
+    done
+else
+    echo "  ⚠ no skills/ directory found, skipping"
+fi
+echo ""
+
+# Step 4: Verify installation
+echo "Step 4: Verifying installation..."
 if command_exists vibe; then
     echo "  ✓ 'vibe' command is available"
     VIBE_PATH=$(which vibe)

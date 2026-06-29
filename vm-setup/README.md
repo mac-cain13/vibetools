@@ -96,7 +96,8 @@ BROKEN: - Login to Xcode with `vibecoding@nonstrict.com` // TODO: Fix 2FA
   - This ensures paths match between host (`/Volumes/External/Repositories/...`) and VM
 - Add the share to Settings > General > Login items > + Select the mounted Repositories folder
 - Symlink the user CLAUDE.md so it stays in sync with the repo: `mkdir -p ~/.claude && ln -sf /Volumes/External/Repositories/vibetools/vm-setup/Claude.md ~/.claude/CLAUDE.md`
-- Install the park skill (also works to update an existing install): `mkdir -p ~/.claude/skills && rm -rf ~/.claude/skills/park && cp -R /Volumes/External/Repositories/vibetools/skills/park ~/.claude/skills/`
+- Install the park skill by symlinking it so it stays in sync with the repo (also works to update an existing install): `mkdir -p ~/.claude/skills && rm -rf ~/.claude/skills/park && ln -sf /Volumes/External/Repositories/vibetools/skills/park ~/.claude/skills/park`
+  - Note: `./install.sh` already symlinks every skill in `skills/`, so this manual step is only needed if you haven't run it.
 
 - Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.
 - Run UITests once over SSH, this will trigger a permission prompt for XCTests to allow it to run.

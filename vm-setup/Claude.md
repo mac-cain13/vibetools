@@ -1,47 +1,18 @@
-# Development Workflow
+# About the setup
 
-## Research → Plan → Ask Questions → Implement
+You're running in a Virtual Machine, we're working on the same files through a shared drive. I'm working on the host, so if I say something doesn't build on my machine, I'm talking about my host machine which might be slightly different from your machine. Also if you want to show something to me make sure to serve it on the local network so I can access it or if you present a file path use the /Volumes/External/ prefix path because that is the same on my machine.
 
-**NEVER JUMP STRAIGHT TO CODING!** Always follow this sequence:
+# Branching
 
-### 1. Research Phase
-- Explore the codebase and understand existing patterns
-- Use multiple agents for parallel exploration when beneficial
-- Check for existing build/test commands and conventions
+Don't create a new branch unless explicitly asked by the user. The default is that we want to commit on the branch we're working on, even if this is the main branchy.
 
-### 2. Planning & Question Phase  
-- Create a detailed implementation plan
-- **IDENTIFY AMBIGUITIES** - ask 3-5 clarifying questions about unclear aspects
-- **Present plan for approval** if complex or ambiguous
-- If straightforward and clear, proceed directly to implementation
+# Swift Code Style
 
-### 3. Implementation Phase
-- Execute plan with validation checkpoints
-- Use TodoWrite tool for complex multi-step tasks (recommended for all non-trivial work)
-- **Use multiple agents aggressively** - split work whenever tasks can be done in parallel
-
-### 4. Validation Standards
-- **Always attempt** to run build commands automatically to verify compilation
-- **Always attempt** to run tests if they exist 
-- Verify the feature works as intended
-- If builds fail, fix issues before completing the task
-
-## Use Multiple Agents Aggressively
-
-Leverage multiple agents whenever possible:
-- Multi-file changes that aren't tightly coupled
-- Research + implementation in parallel  
-- Writing tests while implementing features
-- Complex analysis + implementation
-- Large codebase exploration
-
-## Task Management
-
-Use TodoWrite tool to:
-- Break complex tasks into smaller steps
-- Track progress transparently for the user
-- Plan before implementing
-- Show what's been completed
+- **No `@unchecked Sendable`** - Never use `@unchecked Sendable` without explicit approval. Always implement proper `Sendable` conformance. Only as a last resort, with explicit user approval, is `@unchecked Sendable` allowed.
+- **File headers** - Every Swift file should have a header comment aligning with other files in the project
+- **Error logging** - Always log errors as `(error as NSError).debugDescription` for complete error information
+- **Protocols only when needed** - Only create protocols when multiple implementations exist or for testing
+- **SwiftDoc comments** - Write and maintain short and pragmatic documentation comments for all public and internal functions
 
 # Improved Xcode builds
 
@@ -53,4 +24,10 @@ Example:
 
 # Available tools
 
-These tools and their dependencies are installed and available to use if you might need them: ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg
+These tools and their dependencies are installed and available to use if you might need them: ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg sentry
+- If you need an iOS simulator use "iPhone 17 Pro" as other simulators might not be available. If you need to use another simulator first check `xcrun simctl list devices available` for available simulators instead of guessing as mentioning a non-existing simulator takes a lot of time.
+
+# Git quirks
+
+- **`fatal: unable to write new index file`** — this is transient and self-heals. Retry the same git command. It's perfectly fine for the retry to error too; just keep retrying — typically 3–5 attempts will get through. Do NOT attempt repair tactics (no inspecting `.git` internals, checking for `index.lock`, switching working directories, or rewriting the index). Those interventions cause more harm than the wait. Retry is the only correct response.
+  - **How to retry**: prefer a bare retry of the same command — no leading `sleep`. The condition self-heals very quickly (often by the time the next tool call dispatches), so a bare retry usually works. If a retry still fails, you may chain a *short* sleep in front (e.g. `sleep 5 && git …`, `sleep 10 && git …`); the Bash runtime blocks long leading sleeps (≳30s) anyway, and a long sleep is the wrong shape — many short retries beat one big wait. Don't escalate the sleep duration past ~10s; just retry again.

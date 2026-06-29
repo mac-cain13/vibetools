@@ -95,7 +95,7 @@ BROKEN: - Login to Xcode with `vibecoding@nonstrict.com` // TODO: Fix 2FA
   - `sudo ln -s /Volumes/Repositories /Volumes/External/Repositories`
   - This ensures paths match between host (`/Volumes/External/Repositories/...`) and VM
 - Add the share to Settings > General > Login items > + Select the mounted Repositories folder
-- Add `mv Claude.md ~/.claude/claude.md`
+- Symlink the user CLAUDE.md so it stays in sync with the repo: `mkdir -p ~/.claude && ln -sf /Volumes/External/Repositories/vibetools/vm-setup/Claude.md ~/.claude/CLAUDE.md`
 - Install the park skill (also works to update an existing install): `mkdir -p ~/.claude/skills && rm -rf ~/.claude/skills/park && cp -R /Volumes/External/Repositories/vibetools/skills/park ~/.claude/skills/`
 
 - Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.

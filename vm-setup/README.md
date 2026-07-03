@@ -50,6 +50,10 @@ _Pristine VM ready._
 - Setup SSH key: `mkdir -p ~/.ssh && echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPGiURHzpEStKP4pi6TH5o6BXxzzwVA1imslB/ID5Vk3 id_vibecoding" > ~/.ssh/authorized_keys`
 - Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
+- Install Peekaboo (macOS screen capture + GUI automation, used by the coding agents): `brew install steipete/tap/peekaboo`
+  - The `peekaboo` skill ships in this repo under `skills/peekaboo/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
+  - Peekaboo needs **Screen Recording** and **Accessibility** permissions. Because the coding agent runs it over SSH, these must be granted to the SSH host process, not to peekaboo itself: in Settings > Privacy & Security, grant both **Screen Recording** and **Accessibility** to `sshd-keygen-wrapper` (`/usr/libexec/sshd-keygen-wrapper`). Add it via the `+` button (⌘⇧G → paste the path) if it isn't already listed, or answer the prompt that appears the first time peekaboo runs over SSH.
+  - Verify with `peekaboo permissions status --json` (over SSH) — both should report authorized.
 - Add PermissionAutoResponder.app to Applications, then;
   - add it as a login item: Settings > General > Login items > + Select the app
   - Give accessibility permissions!

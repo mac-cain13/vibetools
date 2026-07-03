@@ -26,6 +26,7 @@ Example:
 
 These tools and their dependencies are installed and available to use if you might need them: ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg sentry
 - If you need an iOS simulator use "iPhone 17 Pro" as other simulators might not be available. If you need to use another simulator first check `xcrun simctl list devices available` for available simulators instead of guessing as mentioning a non-existing simulator takes a lot of time.
+- **`peekaboo`** — macOS screen capture, AI screen analysis, and GUI automation CLI (installed via Homebrew). Use it to screenshot the screen/windows, inspect native accessibility UI, and drive clicks/typing/menus. Key commands: `see` (capture UI state + element IDs), `inspect-ui` (AX-only element tree), `click`, `type`, `menu`, `perform-action`. See the `peekaboo` skill for the observation strategy and workflows, or run `peekaboo learn` / `peekaboo <command> --help`.
 
 # Git quirks
 

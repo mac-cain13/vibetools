@@ -54,6 +54,9 @@ _Pristine VM ready._
   - The `peekaboo` skill ships in this repo under `skills/peekaboo/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
   - Peekaboo needs **Screen Recording** and **Accessibility** permissions. Because the coding agent runs it over SSH, these must be granted to the SSH host process, not to peekaboo itself: in Settings > Privacy & Security, grant both **Screen Recording** and **Accessibility** to `sshd-keygen-wrapper` (`/usr/libexec/sshd-keygen-wrapper`). Add it via the `+` button (⌘⇧G → paste the path) if it isn't already listed, or answer the prompt that appears the first time peekaboo runs over SSH.
   - Verify with `peekaboo permissions status --json` (over SSH) — both should report authorized.
+- Install the Sentry CLI (first-party tool for investigating production errors, crashes, and user-reported issues): `brew install getsentry/tools/sentry`
+  - Authenticate with `sentry auth login`; check with `sentry auth status`.
+  - The `sentry` skill ships in this repo under `skills/sentry/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
 - Add PermissionAutoResponder.app to Applications, then;
   - add it as a login item: Settings > General > Login items > + Select the app
   - Give accessibility permissions!

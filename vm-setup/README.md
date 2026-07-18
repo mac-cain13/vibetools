@@ -57,6 +57,10 @@ _Pristine VM ready._
 - Install the Sentry CLI (first-party tool for investigating production errors, crashes, and user-reported issues): `brew install getsentry/tools/sentry`
   - Authenticate with `sentry auth login`; check with `sentry auth status`.
   - The `sentry` skill ships in this repo under `skills/sentry/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
+- Install the Linear CLI (manage Linear issues/projects/cycles from the terminal): `brew install schpet/tap/linear`
+  - Note: `linear` collides with the Linear.app cask, so the tap-qualified `schpet/tap/linear` is required — a bare `brew install linear` would install the desktop app instead.
+  - Authenticate with `linear auth login`; check with `linear auth whoami`.
+  - The `linear-cli` skill ships in this repo under `skills/linear-cli/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
 - Add PermissionAutoResponder.app to Applications, then;
   - add it as a login item: Settings > General > Login items > + Select the app
   - Give accessibility permissions!

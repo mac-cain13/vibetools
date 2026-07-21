@@ -1,0 +1,65 @@
+#!/bin/bash
+set -euo pipefail
+
+# Delivers an already-built macOS .app to a folder the user can click to run it from.
+# It never builds — so it cannot cause a second build of work the agent just compiled.
+# Run it from inside the project's git repo (any worktree).
+#
+#   deliver-mac-app "/path/to/DerivedData/.../My App.app"
+
+APP="${1:-}"
+[ -n "$APP" ] && [ -d "$APP" ] || { echo "usage: deliver-mac-app <path-to-.app>"; exit 2; }
+APP="${APP%/}"; APP_NAME="$(basename "$APP")"
+
+# Destination comes from git alone, so no project ever needs configuring.
+# --path-format=absolute matters: a main checkout otherwise reports a relative
+# ".git", and the project name resolves to ".".
+GIT_COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
+  echo "Not in a git repository — can't work out where this build belongs."; exit 1; }
+CANONICAL="$(dirname "$GIT_COMMON")"      # the main checkout, even when run from a worktree
+PROJECT="$(basename "$CANONICAL")"
+DROP_ROOT="$(dirname "$CANONICAL")/_Builds"
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" = "HEAD" ] && BRANCH="detached-$(git rev-parse --short HEAD)"
+BRANCH="${BRANCH//\//-}"                  # keep one directory level per branch
+DEST="$DROP_ROOT/$PROJECT/$BRANCH"
+
+# A broken signature doesn't fail here — it fails as an unexplained crash after the
+# user clicks it. Refuse now, while there's still a build log to read.
+if ! codesign --verify --deep --strict "$APP" 2>/dev/null; then
+  echo "✗ $APP_NAME fails signature verification — it would crash on launch."
+  echo "  Rebuild signed (-allowProvisioningUpdates, no CODE_SIGNING_ALLOWED=NO)."; exit 1
+fi
+if [ ! -f "$APP/Contents/embedded.provisionprofile" ]; then
+  echo "✗ $APP_NAME has no embedded provisioning profile — it won't launch on another Mac."
+  echo "  Rebuild signed with a real team (-allowProvisioningUpdates)."; exit 1
+fi
+
+# -o comm= (executable path), not -o command= (argv): argv would contain grep's own
+# pattern and self-match, warning every time. grep -F, not pgrep -f: app names contain
+# parentheses, which pgrep reads as a regex.
+if ps ax -o comm= | grep -qF "$DEST/$APP_NAME/Contents/MacOS/"; then
+  echo "⚠ A copy is already running from there — quit it, or it'll keep the old build."
+fi
+
+mkdir -p "$DEST"
+# ditto, not cp: preserves framework symlinks and the signature.
+# Stage then swap, so a half-copied bundle never sits at the path being clicked.
+STAGING="$DEST/.staging"; rm -rf "$STAGING"; mkdir -p "$STAGING"
+ditto "$APP" "$STAGING/$APP_NAME"
+rm -rf "${DEST:?}/$APP_NAME"
+mv "$STAGING/$APP_NAME" "$DEST/$APP_NAME"; rmdir "$STAGING"
+
+cat > "$DEST/BUILD-INFO.txt" <<EOF
+$APP_NAME
+Built:      $(date "+%Y-%m-%d %H:%M:%S")
+Project:    $PROJECT
+Branch:     $(git rev-parse --abbrev-ref HEAD)
+Commit:     $(git log -1 --format='%h %s' 2>/dev/null)
+Dirty:      $([ -n "$(git status --porcelain 2>/dev/null)" ] && echo "yes — uncommitted changes are in this build" || echo "no")
+Bundle id:  $(plutil -extract CFBundleIdentifier raw -o - "$DEST/$APP_NAME/Contents/Info.plist" 2>/dev/null)
+Signed by:  $(codesign -dvv "$DEST/$APP_NAME" 2>&1 | awk -F'=' '/^Authority/{print $2; exit}')
+EOF
+
+echo "$DEST/$APP_NAME"

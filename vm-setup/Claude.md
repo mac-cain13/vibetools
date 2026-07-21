@@ -14,6 +14,10 @@ Don't create a new branch unless explicitly asked by the user. The default is th
 - **Protocols only when needed** - Only create protocols when multiple implementations exist or for testing
 - **SwiftDoc comments** - Write and maintain short and pragmatic documentation comments for all public and internal functions
 
+# Delivering builds for testing
+
+When you've finished something I could click through — a UI change, a new feature, a visible fix — deliver me a build and give me the path, without waiting to be asked. Use the `deliver` skill. Don't do it for work with nothing to look at (refactors, backend-only changes) or when I asked you to review code — I'll read that in Xcode myself.
+
 # Improved Xcode builds
 
 You must always pipe any `xcodebuild` command you execute through `xcbeautify` for a more compact build output that easier to parse and gives better error information.

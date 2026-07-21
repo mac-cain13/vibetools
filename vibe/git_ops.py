@@ -527,6 +527,11 @@ def create_worktree(
 
     # Check if local branch already exists
     if branch_exists_local(worktree_name, cwd):
+        if base_branch:
+            console.print(
+                f"[yellow]Warning:[/] Branch '{worktree_name}' already exists. "
+                f"The --from flag will be ignored."
+            )
         # Branch exists, create worktree from existing branch
         result = subprocess.run(
             ["git", "worktree", "add", str(worktree_path), worktree_name],

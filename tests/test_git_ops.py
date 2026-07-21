@@ -432,6 +432,88 @@ class TestCreateWorktree:
         assert worktree_path.exists()
         assert branch_exists_local("derived-branch", cwd=temp_git_repo)
 
+    def test_create_with_base_branch_checked_out_in_worktree(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Should branch from a base that is checked out in another worktree.
+
+        Covers 'vibe <new> --from <branch>' run from the main checkout while
+        <branch> lives in its own worktree: the new branch must start at the
+        base branch's tip, not the main checkout's HEAD.
+        """
+        # Give the base branch a commit that main doesn't have, and check it
+        # out in a worktree of its own.
+        base_worktree = temp_worktree_base / "test-repo" / "os27"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "os27", str(base_worktree)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        (base_worktree / "os27.txt").write_text("os27\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=base_worktree, capture_output=True, check=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "os27 work"],
+            cwd=base_worktree,
+            capture_output=True,
+            check=True,
+        )
+
+        worktree_path = create_worktree(
+            worktree_name="appintents",
+            repo_name="test-repo",
+            base_branch="os27",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+
+        assert worktree_path == temp_worktree_base / "test-repo" / "appintents"
+        assert worktree_path.exists()
+        tips = subprocess.run(
+            ["git", "rev-parse", "appintents", "os27"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        assert tips[0] == tips[1]
+
+    def test_existing_branch_warns_when_base_branch_given(
+        self,
+        temp_git_repo: Path,
+        temp_worktree_base: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Should warn that --from is ignored when the branch already exists."""
+        subprocess.run(
+            ["git", "branch", "existing-branch"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "branch", "some-base"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        worktree_path = create_worktree(
+            worktree_name="existing-branch",
+            repo_name="test-repo",
+            base_branch="some-base",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+
+        assert worktree_path.exists()
+        # Normalize rich's line wrapping before matching the message.
+        output = " ".join(capsys.readouterr().out.split())
+        assert "Branch 'existing-branch' already exists" in output
+        assert "--from flag will be ignored" in output
+
     def test_create_from_remote_branch(
         self, temp_git_repo_with_remote: tuple[Path, Path], temp_worktree_base: Path
     ) -> None:

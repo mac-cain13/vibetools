@@ -24,10 +24,19 @@ class WorktreeStatus(Enum):
 
 @dataclass
 class RepoInfo:
-    """Information about a git repository."""
+    """Information about a git repository checkout.
+
+    Attributes:
+        root: Toplevel of the current checkout; inside a linked worktree this
+            is the worktree's own root
+        name: Repository name, always derived from the main checkout
+        main_root: Root of the main repository checkout (equals root when not
+            inside a linked worktree)
+    """
 
     root: Path
     name: str
+    main_root: Path
 
 
 def branch_to_worktree_dirname(branch: str) -> str:
@@ -102,11 +111,17 @@ def validate_git_repo(cwd: Path | None = None) -> bool:
 def get_repo_info(cwd: Path | None = None) -> RepoInfo:
     """Get repository root path and name.
 
+    Inside a linked worktree, `name` and `main_root` come from the main
+    checkout (the parent of the shared .git directory) rather than the
+    worktree directory itself, so worktrees are always grouped under the
+    real repository name. `root` still points at the current checkout's
+    toplevel.
+
     Args:
         cwd: Working directory (defaults to current directory)
 
     Returns:
-        RepoInfo with root path and repository name
+        RepoInfo with root path, repository name, and main checkout root
 
     Raises:
         RuntimeError: If not in a git repository
@@ -121,7 +136,22 @@ def get_repo_info(cwd: Path | None = None) -> RepoInfo:
         raise RuntimeError("Not in a git repository")
 
     root = Path(result.stdout.strip())
-    return RepoInfo(root=root, name=root.name)
+
+    main_root = root
+    common_result = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if common_result.returncode == 0:
+        common_dir = Path(common_result.stdout.strip())
+        if not common_dir.is_absolute():
+            common_dir = ((cwd or Path.cwd()) / common_dir).resolve()
+        if common_dir.name == ".git":
+            main_root = common_dir.parent
+
+    return RepoInfo(root=root, name=main_root.name, main_root=main_root)
 
 
 def check_worktree_exists(

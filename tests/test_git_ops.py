@@ -110,6 +110,7 @@ class TestGetRepoInfo:
         assert isinstance(info, RepoInfo)
         assert info.root == temp_git_repo
         assert info.name == "test-repo"
+        assert info.main_root == temp_git_repo
 
     def test_from_subdirectory(self, temp_git_repo: Path) -> None:
         """Should return correct info from subdirectory."""
@@ -118,6 +119,50 @@ class TestGetRepoInfo:
         info = get_repo_info(cwd=subdir)
         assert info.root == temp_git_repo
         assert info.name == "test-repo"
+        assert info.main_root == temp_git_repo
+
+    def test_from_worktree_uses_main_repo_name(
+        self, temp_git_repo: Path, tmp_path: Path
+    ) -> None:
+        """Inside a linked worktree, name/main_root come from the main repo.
+
+        Regression: running 'vibe <branch>' from a worktree used the
+        worktree's directory name as the repo name, placing the new worktree
+        under _vibecoding/<worktree-name>/ instead of _vibecoding/<repo>/.
+        """
+        worktree_path = tmp_path / "_vibecoding" / "test-repo" / "os27"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "os27", str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        info = get_repo_info(cwd=worktree_path)
+
+        assert info.root == worktree_path
+        assert info.name == "test-repo"
+        assert info.main_root == temp_git_repo
+
+    def test_from_worktree_subdirectory(
+        self, temp_git_repo: Path, tmp_path: Path
+    ) -> None:
+        """Should also resolve the main repo name from a worktree subdir."""
+        worktree_path = tmp_path / "_vibecoding" / "test-repo" / "os27"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "os27", str(worktree_path)],
+            cwd=temp_git_repo,
+            capture_output=True,
+            check=True,
+        )
+        subdir = worktree_path / "subdir"
+        subdir.mkdir()
+
+        info = get_repo_info(cwd=subdir)
+
+        assert info.root == worktree_path
+        assert info.name == "test-repo"
+        assert info.main_root == temp_git_repo
 
     def test_raises_when_not_in_repo(self, tmp_path: Path) -> None:
         """Should raise RuntimeError when not in a git repository."""

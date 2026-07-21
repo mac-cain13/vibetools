@@ -14,10 +14,14 @@ from vibe.cli import app
 runner = CliRunner()
 
 
-def make_repo_info(name: str = "test-repo", root: Path = Path("/repo")):
+def make_repo_info(
+    name: str = "test-repo",
+    root: Path = Path("/repo"),
+    main_root: Path | None = None,
+):
     """Create a properly configured mock RepoInfo."""
     from vibe.git_ops import RepoInfo
-    return RepoInfo(name=name, root=root)
+    return RepoInfo(name=name, root=root, main_root=main_root or root)
 
 
 class TestCliHelp:
@@ -1119,3 +1123,84 @@ class TestPostSessionCleanupWiring:
 
         assert result.exit_code == 0
         mock_cleanup.assert_not_called()
+
+
+class TestRunFromInsideWorktree:
+    """Tests for running vibe from inside an existing worktree.
+
+    Regression: a new worktree created from within a worktree must be
+    grouped under the main repository's name (_vibecoding/<repo>/<branch>),
+    not under the current worktree's directory name.
+    """
+
+    @patch("vibe.cli.post_session_cleanup")
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_default_flow_groups_worktree_under_main_repo_name(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        """Should use the main repo name while branching from worktree HEAD."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info(
+            name="bezel",
+            root=Path("/repos/_vibecoding/bezel/os27"),
+            main_root=Path("/repos/bezel"),
+        )
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["appintents", "--claude"])
+
+        assert result.exit_code == 0
+        # Worktree setup gets the main repo name, but keeps the current
+        # worktree as cwd so the new branch starts from the worktree's HEAD.
+        mock_setup.assert_called_once_with(
+            "appintents", None, "bezel", Path("/repos/_vibecoding/bezel/os27")
+        )
+        mock_connect.assert_called_once_with(
+            repo_name="bezel",
+            worktree_name="appintents",
+            with_coding_tool=True,
+            coding_tool="cly",
+            remote_shell=None,
+        )
+        # Post-session cleanup runs against the main repository root.
+        assert mock_cleanup.call_args.args[:3] == (
+            "bezel",
+            "appintents",
+            Path("/repos/bezel"),
+        )
+
+    @patch("vibe.cli.clean_specific_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_clean_uses_main_repo_root(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_clean: MagicMock,
+    ) -> None:
+        """Should clean against the main repository root, not the worktree."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info(
+            name="bezel",
+            root=Path("/repos/_vibecoding/bezel/os27"),
+            main_root=Path("/repos/bezel"),
+        )
+        mock_clean.return_value = True
+
+        result = runner.invoke(app, ["--clean", "appintents"])
+
+        assert result.exit_code == 0
+        mock_clean.assert_called_once_with(
+            worktree_name="appintents",
+            repo_name="bezel",
+            repo_root=Path("/repos/bezel"),
+        )

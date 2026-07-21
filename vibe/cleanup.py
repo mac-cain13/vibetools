@@ -9,7 +9,6 @@ from pathlib import Path
 from vibe.config import JUNK_FILES, LOCAL_WORKTREE_BASE
 from vibe.git_ops import (
     get_git_common_dir,
-    get_repo_info,
     get_tip_commit_subject,
     get_worktree_list,
     has_uncommitted_changes,

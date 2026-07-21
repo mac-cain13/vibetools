@@ -1114,7 +1114,7 @@ def main(
         success = clean_specific_worktree(
             worktree_name=branch,
             repo_name=repo_info.name,
-            repo_root=repo_info.root,
+            repo_root=repo_info.main_root,
         )
         if not success:
             raise typer.Exit(1)
@@ -1151,7 +1151,7 @@ def main(
             with_coding_tool=False,
             remote_shell=remote_shell,
         )
-        _run_post_session_cleanup(repo_info.name, branch, repo_info.root)
+        _run_post_session_cleanup(repo_info.name, branch, repo_info.main_root)
         raise typer.Exit(exit_code)
 
     # Handle --local option
@@ -1176,7 +1176,7 @@ def main(
             repo_info.name, branch, LOCAL_WORKTREE_BASE
         )
         exit_code = connect_locally(worktree_path, coding_tool=coding_tool)
-        _run_post_session_cleanup(repo_info.name, branch, repo_info.root)
+        _run_post_session_cleanup(repo_info.name, branch, repo_info.main_root)
         raise typer.Exit(exit_code)
 
     # Handle no-argument case: connect to current context
@@ -1245,7 +1245,7 @@ def main(
         coding_tool=coding_tool,
         remote_shell=remote_shell,
     )
-    _run_post_session_cleanup(repo_info.name, branch, repo_info.root)
+    _run_post_session_cleanup(repo_info.name, branch, repo_info.main_root)
     raise typer.Exit(exit_code)
 
 

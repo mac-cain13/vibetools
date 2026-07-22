@@ -48,6 +48,20 @@ _Pristine VM ready._
 - Add dotfiles: `mv zshrc ~/.zshrc && mv p10k.zsh ~/.p10k.zsh`
 - Install p10k: `git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"`
 - Setup SSH key: `mkdir -p ~/.ssh && echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPGiURHzpEStKP4pi6TH5o6BXxzzwVA1imslB/ID5Vk3 id_vibecoding" > ~/.ssh/authorized_keys`
+- Harden SSH to key-only (do this after the key above is installed and you've confirmed key login works, or you'll lock yourself out):
+  ```bash
+  sudo tee /etc/ssh/sshd_config.d/100-hardening.conf >/dev/null <<'EOF'
+  PasswordAuthentication no
+  KbdInteractiveAuthentication no
+  PermitRootLogin no
+  # VM with host-only networking:
+  AllowUsers admin
+  # Physical machine on the LAN (use instead of the line above):
+  # AllowUsers admin@192.168.1.10
+  AuthenticationMethods publickey
+  EOF
+  sudo launchctl kickstart -k system/com.openssh.sshd
+  ```
 - Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
 - Install Peekaboo (macOS screen capture + GUI automation, used by the coding agents): `brew install steipete/tap/peekaboo`

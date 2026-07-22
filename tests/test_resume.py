@@ -322,6 +322,30 @@ class TestResumeMatrix:
         assert "?? parked.txt" in git_porcelain(worktree_path)
         mock_connect.assert_called_once()
 
+    def test_resume_vm_flag_threads_target(self, resume_env: ResumeEnv) -> None:
+        """`resume --vm` should resolve via tart and thread host + opts."""
+        from vibe.connection import EPHEMERAL_HOSTKEY_OPTS
+        from vibe.target import DEFAULT_USER
+
+        worktree_path = add_worktree(
+            resume_env.repo, resume_env.worktree_base, "feature-vm"
+        )
+        commit_in_worktree(worktree_path, "wip: park TST_VM")
+        write_board_ticket(resume_env.board, "TST_VM", "feature-vm", tool="claude")
+
+        with patch(
+            "vibe.target.tart_ip", return_value="10.0.0.7"
+        ) as mock_ip, patch(
+            "vibe.cli.connect_to_remote", return_value=0
+        ) as mock_connect:
+            result = runner.invoke(app, ["resume", "TST_VM", "--vm", "beta"])
+
+        assert result.exit_code == 0
+        mock_ip.assert_called_once_with("beta")
+        kwargs = mock_connect.call_args.kwargs
+        assert kwargs["user_host"] == f"{DEFAULT_USER}@10.0.0.7"
+        assert kwargs["ssh_opts"] == EPHEMERAL_HOSTKEY_OPTS
+
     def test_existing_worktree_non_marker_tip_not_unwound(
         self, resume_env: ResumeEnv
     ) -> None:

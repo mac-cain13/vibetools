@@ -104,6 +104,44 @@ are skipped). The on-disk contract is specified in
 [docs/nsproject-park.md](docs/nsproject-park.md); the board itself (folders,
 ticket schema, the macOS Kanban app) is the separate NSProject repo.
 
+### Selecting a VM (running clones side by side)
+
+Local VMs are addressed by their **tart name**, not by mDNS. By default **vibe**
+connects to `config.DEFAULT_VM` (`vibecoding`), resolving its current IP with
+`tart ip` — so `.local` name collisions between clones never come into play. To
+run several clones at once — e.g. one on a macOS beta, one reserved for
+GUI-heavy automation — just name the one you want:
+
+```bash
+# Default: the `vibecoding` tart VM, resolved via `tart ip`
+vibe feature-branch --claude
+
+# A different clone by its tart name
+vibe feature-branch --vm vibecoding-beta
+
+# An explicit host — e.g. a VM on other hardware / over Tailscale
+vibe --cli --host admin@mac-mini.tailnet.ts.net
+
+# Set a default target for the shell so you don't repeat the flag
+export VIBE_VM=vibecoding-beta
+vibe feature-branch --claude
+```
+
+Resolution precedence (first match wins): `--host` → `--vm` → `$VIBE_SSH_HOST`
+→ `$VIBE_VM` → `config.DEFAULT_VM` (the default local VM) → `config.SSH_USER_HOST`
+(only when no default VM is configured, e.g. WSL, which has no tart). `--vm` /
+`$VIBE_VM` / `DEFAULT_VM` all name a **tart VM** and resolve to `<user>@<ip>` via
+`tart ip`; this replaces mDNS, which was ambiguous because cloned VMs share the
+`vibecoding` guest hostname (they would all answer to `vibecoding.local`).
+Because tart clones share an SSH host key and get DHCP addresses, tart-resolved
+connections auto-accept the host key and keep it out of your `known_hosts`, so a
+reassigned address never triggers a blocking host-key mismatch.
+
+If the default VM isn't running, resolution fails fast with an actionable error
+(rather than a slow mDNS timeout). To reach a VM by its `.local` name anyway,
+name it explicitly: `--host admin@vibecoding.local`.
+
+
 ### Context-Aware Behavior
 
 **vibe** automatically detects your current git context:
@@ -156,6 +194,10 @@ Options:
   --clean        Clean worktrees. Without branch, cleans all.
                  With branch, cleans specific worktree.
   --from TEXT    Base branch to create new branch from.
+  --vm TEXT      Connect to a specific VM by its tart name (resolved via
+                 `tart ip`). Disambiguates clones. Defaults to $VIBE_VM.
+  --host TEXT    Connect to an explicit user@host. Overrides --vm.
+                 Defaults to $VIBE_SSH_HOST.
   -h, --help     Show help message and exit.
 ```
 
@@ -228,7 +270,12 @@ REMOTE_REPO_BASE = Path("/Volumes/External/Repositories")
 LOCAL_WORKTREE_BASE = LOCAL_REPO_BASE / "_vibecoding"
 REMOTE_WORKTREE_BASE = REMOTE_REPO_BASE / "_vibecoding"
 
-# SSH configuration
+# Default local VM: connected to by tart name (resolved via `tart ip`), not
+# mDNS. Set to None on hosts without tart (e.g. WSL) to use SSH_USER_HOST.
+DEFAULT_VM = "vibecoding"
+
+# SSH configuration. SSH_USER_HOST is the static fallback used only when
+# DEFAULT_VM is None; it also supplies the default SSH username for tart VMs.
 SSH_USER_HOST = "user@your-dev-machine.local"
 SSH_KEY_PATH = Path.home() / ".ssh" / "your_key"
 

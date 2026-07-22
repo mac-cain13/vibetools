@@ -9,6 +9,20 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep SSH target resolution hermetic and offline.
+
+    Clears the VIBE_VM / VIBE_SSH_HOST overrides and disables the default tart
+    VM so ``resolve_target()`` never shells out to ``tart`` for the no-flag path
+    (it falls back to the static ``SSH_USER_HOST``). Tests that exercise tart
+    resolution opt back in explicitly.
+    """
+    monkeypatch.delenv("VIBE_VM", raising=False)
+    monkeypatch.delenv("VIBE_SSH_HOST", raising=False)
+    monkeypatch.setattr("vibe.target.DEFAULT_VM", None, raising=False)
+
+
 @pytest.fixture
 def temp_git_repo(tmp_path: Path) -> Path:
     """Create a temporary git repository for testing.

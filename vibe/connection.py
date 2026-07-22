@@ -22,6 +22,16 @@ from vibe.utils import console
 # Default timeout for SSH connection attempts (seconds)
 SSH_TIMEOUT = 30
 
+# Extra ssh options for ephemeral VMs. tart clones share an SSH host key and get
+# DHCP addresses, so a reassigned IP would otherwise trip a blocking
+# "REMOTE HOST IDENTIFICATION HAS CHANGED" error. Auto-accept the key and keep
+# it out of the user's known_hosts so these throwaway addresses never conflict.
+EPHEMERAL_HOSTKEY_OPTS = [
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
+]
+
 
 def validate_ssh_key(ssh_key: Path) -> bool:
     """Validate that SSH key exists and has correct permissions.
@@ -53,17 +63,24 @@ def escape_shell_path(path: Path) -> str:
 def build_ssh_command(
     ssh_key: Path = SSH_KEY_PATH,
     user_host: str = SSH_USER_HOST,
+    ssh_opts: list[str] | None = None,
 ) -> list[str]:
     """Build the base SSH command with key authentication.
 
     Args:
         ssh_key: Path to SSH private key
         user_host: SSH user@host string
+        ssh_opts: Extra ssh options inserted before the target (e.g. host-key
+            handling for ephemeral VMs). None or empty for the default behavior.
 
     Returns:
         List of command arguments for SSH
     """
-    return ["ssh", "-i", str(ssh_key), user_host, "-t"]
+    cmd = ["ssh", "-i", str(ssh_key)]
+    if ssh_opts:
+        cmd.extend(ssh_opts)
+    cmd.extend([user_host, "-t"])
+    return cmd
 
 
 def build_remote_setup_commands(
@@ -184,6 +201,7 @@ def connect_to_remote(
     remote_base: Path = REMOTE_WORKTREE_BASE,
     coding_tool: str = CLAUDE_CODE_CMD,
     remote_shell: Shell | None = DEFAULT_REMOTE_SHELL,
+    ssh_opts: list[str] | None = None,
 ) -> int:
     """Connect to remote machine via SSH.
 
@@ -196,6 +214,7 @@ def connect_to_remote(
         remote_base: Remote base path for worktrees
         coding_tool: Command to run for coding tool
         remote_shell: Remote shell to use (None=macOS, WSL, PowerShell)
+        ssh_opts: Extra ssh options (e.g. host-key handling for ephemeral VMs)
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -216,7 +235,7 @@ def connect_to_remote(
     )
 
     # Build and execute SSH command
-    ssh_cmd = build_ssh_command(ssh_key, user_host)
+    ssh_cmd = build_ssh_command(ssh_key, user_host, ssh_opts=ssh_opts)
     ssh_cmd.append(remote_cmd)
 
     result = subprocess.run(ssh_cmd)
@@ -233,6 +252,7 @@ def connect_to_remote_home(
     unlock_keychain: bool = UNLOCK_KEYCHAIN,
     keychain_command: str | None = KEYCHAIN_COMMAND,
     remote_shell: Shell | None = DEFAULT_REMOTE_SHELL,
+    ssh_opts: list[str] | None = None,
 ) -> int:
     """Connect to remote machine's home directory via SSH.
 
@@ -242,6 +262,7 @@ def connect_to_remote_home(
         unlock_keychain: Whether to unlock the macOS keychain
         keychain_command: The keychain unlock command to use
         remote_shell: Remote shell to use (None=macOS, WSL, PowerShell)
+        ssh_opts: Extra ssh options (e.g. host-key handling for ephemeral VMs)
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -268,7 +289,7 @@ def connect_to_remote_home(
         remote_cmd = " && ".join(commands)
 
     # Build SSH command with setup commands
-    ssh_cmd = build_ssh_command(ssh_key, user_host)
+    ssh_cmd = build_ssh_command(ssh_key, user_host, ssh_opts=ssh_opts)
     if remote_cmd is not None:
         ssh_cmd.append(remote_cmd)
 
@@ -316,6 +337,7 @@ def connect_to_remote_path(
     user_host: str = SSH_USER_HOST,
     coding_tool: str = CLAUDE_CODE_CMD,
     remote_shell: Shell | None = DEFAULT_REMOTE_SHELL,
+    ssh_opts: list[str] | None = None,
 ) -> int:
     """Connect to a specific remote path via SSH.
 
@@ -328,6 +350,7 @@ def connect_to_remote_path(
         user_host: SSH user@host string
         coding_tool: Command to run for coding tool
         remote_shell: Remote shell to use (None=macOS, WSL, PowerShell)
+        ssh_opts: Extra ssh options (e.g. host-key handling for ephemeral VMs)
 
     Returns:
         Exit code from SSH command (255 typically indicates SSH failure)
@@ -346,7 +369,7 @@ def connect_to_remote_path(
     )
 
     # Build and execute SSH command
-    ssh_cmd = build_ssh_command(ssh_key, user_host)
+    ssh_cmd = build_ssh_command(ssh_key, user_host, ssh_opts=ssh_opts)
     ssh_cmd.append(remote_cmd)
 
     result = subprocess.run(ssh_cmd)

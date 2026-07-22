@@ -81,6 +81,30 @@ class TestBuildSshCommand:
 
         assert str(key_path) in cmd
 
+    def test_inserts_ssh_opts_before_target(self) -> None:
+        """Should place extra ssh options before the user@host target."""
+        cmd = build_ssh_command(
+            ssh_key=Path("/key"),
+            user_host="admin@10.0.0.5",
+            ssh_opts=["-o", "StrictHostKeyChecking=accept-new"],
+        )
+
+        assert cmd == [
+            "ssh",
+            "-i",
+            "/key",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "admin@10.0.0.5",
+            "-t",
+        ]
+
+    def test_empty_ssh_opts_is_default_shape(self) -> None:
+        """None or [] ssh_opts should leave the command unchanged."""
+        base = build_ssh_command(ssh_key=Path("/key"), user_host="u@h")
+        assert build_ssh_command(Path("/key"), "u@h", ssh_opts=[]) == base
+        assert base == ["ssh", "-i", "/key", "u@h", "-t"]
+
 
 class TestBuildRemoteSetupCommands:
     """Tests for build_remote_setup_commands function."""

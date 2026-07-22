@@ -6,10 +6,10 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from vibe.cli import app
+from vibe.config import SSH_USER_HOST
 
 runner = CliRunner()
 
@@ -136,7 +136,9 @@ class TestCliCommand:
             repo_name="test-repo",
             worktree_name="feature-branch",
             with_coding_tool=False,
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
 
@@ -227,7 +229,9 @@ class TestDefaultCommand:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -424,7 +428,9 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="opencode",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -452,7 +458,9 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cdx",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -480,7 +488,9 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_locally")
@@ -587,7 +597,9 @@ class TestCodingToolOptions:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cdx",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.prompt_coding_tool_choice")
@@ -680,7 +692,9 @@ class TestSlashedBranchNames:
             worktree_name="feature%2Fretry-upload",
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_to_remote")
@@ -707,7 +721,9 @@ class TestSlashedBranchNames:
             repo_name="test-repo",
             worktree_name="feature%2Fretry-upload",
             with_coding_tool=False,
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_locally")
@@ -798,7 +814,9 @@ class TestNoArgBehavior:
             remote_path=Path("/Volumes/External/Repositories/my-repo"),
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.connect_to_remote_path")
@@ -826,7 +844,9 @@ class TestNoArgBehavior:
             remote_path=Path("/Volumes/External/Repositories/_vibecoding/my-repo/feature"),
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.get_current_context")
@@ -884,7 +904,9 @@ class TestShellChoice:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=Shell.WSL,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.REMOTE_IS_WINDOWS", True)
@@ -918,7 +940,9 @@ class TestShellChoice:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="claude --dangerously-skip-permissions",
+            user_host=SSH_USER_HOST,
             remote_shell=Shell.POWERSHELL,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.REMOTE_IS_WINDOWS", False)
@@ -948,7 +972,9 @@ class TestShellChoice:
             worktree_name="feature-branch",
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
 
     @patch("vibe.cli.REMOTE_IS_WINDOWS", True)
@@ -969,7 +995,7 @@ class TestShellChoice:
 
         assert result.exit_code == 0
         mock_shell_prompt.assert_called_once()
-        mock_connect.assert_called_once_with(remote_shell=Shell.POWERSHELL)
+        mock_connect.assert_called_once_with(user_host=SSH_USER_HOST, remote_shell=Shell.POWERSHELL, ssh_opts=[])
 
 
 class TestPostSessionCleanupWiring:
@@ -1169,7 +1195,9 @@ class TestRunFromInsideWorktree:
             worktree_name="appintents",
             with_coding_tool=True,
             coding_tool="cly",
+            user_host=SSH_USER_HOST,
             remote_shell=None,
+            ssh_opts=[],
         )
         # Post-session cleanup runs against the main repository root.
         assert mock_cleanup.call_args.args[:3] == (
@@ -1203,4 +1231,153 @@ class TestRunFromInsideWorktree:
             worktree_name="appintents",
             repo_name="bezel",
             repo_root=Path("/repos/bezel"),
+        )
+
+
+class TestTargetSelection:
+    """Tests for --vm / --host target selection threading."""
+
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.target.tart_ip")
+    def test_vm_flag_threads_ip_and_ephemeral_opts(
+        self,
+        mock_tart_ip: MagicMock,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """--vm should resolve via tart and pass the IP + ephemeral opts."""
+        from vibe.connection import EPHEMERAL_HOSTKEY_OPTS
+        from vibe.target import DEFAULT_USER
+
+        mock_tart_ip.return_value = "10.0.0.5"
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(app, ["feature-branch", "--claude", "--vm", "beta"])
+
+        assert result.exit_code == 0
+        mock_tart_ip.assert_called_once_with("beta")
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="cly",
+            user_host=f"{DEFAULT_USER}@10.0.0.5",
+            remote_shell=None,
+            ssh_opts=EPHEMERAL_HOSTKEY_OPTS,
+        )
+
+    @patch("vibe.cli.connect_to_remote")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_host_flag_threads_literal_no_opts(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """--host should pass verbatim with no ephemeral opts."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(
+            app, ["feature-branch", "--claude", "--host", "admin@other.local"]
+        )
+
+        assert result.exit_code == 0
+        mock_connect.assert_called_once_with(
+            repo_name="test-repo",
+            worktree_name="feature-branch",
+            with_coding_tool=True,
+            coding_tool="cly",
+            user_host="admin@other.local",
+            remote_shell=None,
+            ssh_opts=[],
+        )
+
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    def test_vm_and_host_conflict_errors(
+        self,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+    ) -> None:
+        """Passing both --vm and --host should error out."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+
+        result = runner.invoke(
+            app, ["feature-branch", "--claude", "--vm", "a", "--host", "b"]
+        )
+
+        assert result.exit_code == 1
+        assert "either --vm or --host" in result.stdout
+
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.target.tart_ip")
+    def test_vm_resolution_failure_errors(
+        self,
+        mock_tart_ip: MagicMock,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+    ) -> None:
+        """A tart resolution failure should exit cleanly with the message."""
+        from vibe.target import TargetError
+
+        mock_tart_ip.side_effect = TargetError("VM 'ghost' is not running")
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+
+        result = runner.invoke(app, ["feature-branch", "--claude", "--vm", "ghost"])
+
+        assert result.exit_code == 1
+        assert "is not running" in result.stdout
+
+    @patch("vibe.cli.connect_locally")
+    @patch("vibe.cli.setup_worktree")
+    @patch("vibe.cli.get_repo_info")
+    @patch("vibe.cli.validate_git_repo")
+    @patch("vibe.cli.LOCAL_WORKTREE_BASE", Path("/worktrees"))
+    @patch("vibe.target.tart_ip")
+    def test_target_flag_warns_and_is_ignored_with_local(
+        self,
+        mock_tart_ip: MagicMock,
+        mock_validate: MagicMock,
+        mock_repo_info: MagicMock,
+        mock_setup: MagicMock,
+        mock_connect: MagicMock,
+    ) -> None:
+        """--vm with --local should warn and never resolve a remote target."""
+        mock_validate.return_value = True
+        mock_repo_info.return_value = make_repo_info()
+        mock_setup.return_value = True
+        mock_connect.return_value = 0
+
+        result = runner.invoke(
+            app, ["--local", "feature-branch", "--claude", "--vm", "beta"]
+        )
+
+        assert result.exit_code == 0
+        assert "ignored with --local" in result.stdout
+        mock_tart_ip.assert_not_called()
+        mock_connect.assert_called_once_with(
+            Path("/worktrees/test-repo/feature-branch"), coding_tool="cly"
         )

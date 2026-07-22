@@ -14,7 +14,15 @@ if _platform == Platform.MACOS:
     LOCAL_REPO_BASE = Path("/Volumes/External/Repositories")
     REMOTE_REPO_BASE = Path("/Volumes/External/Repositories")
 
-    # SSH configuration
+    # Default VM for local development. Local VMs are addressed by their tart
+    # name (resolved to a fresh IP via `tart ip`), NOT by mDNS — this keeps
+    # cloned VMs unambiguous even though they share the vibecoding.local guest
+    # hostname. Override per-invocation with --vm/--host or $VIBE_VM.
+    DEFAULT_VM: str | None = "vibecoding"
+
+    # SSH configuration. Legacy mDNS host — no longer used for the default path
+    # (see DEFAULT_VM); kept as the source of the default SSH username and as an
+    # explicit escape hatch (`--host admin@vibecoding.local`).
     SSH_USER_HOST = "admin@vibecoding.local"
 
     # macOS keychain unlock (needed for Xcode code signing over SSH)
@@ -34,6 +42,9 @@ else:  # WSL
     # Repository base directories (/mnt/z is the host's Repositories share)
     LOCAL_REPO_BASE = Path("/mnt/z")
     REMOTE_REPO_BASE = Path("/mnt/z")
+
+    # No tart on Windows/WSL hosts — connect to the static host directly.
+    DEFAULT_VM: str | None = None
 
     # SSH configuration
     SSH_USER_HOST = "admin@172.21.0.10"

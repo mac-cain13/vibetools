@@ -62,6 +62,7 @@ from vibe.git_ops import (
     worktree_path_for_branch,
 )
 from vibe.platform import Shell
+from vibe.target import Target, TargetError, resolve_target
 from vibe.nsproject import (
     ParkedWork,
     find_board,
@@ -872,6 +873,8 @@ def _handle_resume(
     codex: bool,
     claude: bool,
     local: bool,
+    vm: Optional[str] = None,
+    host: Optional[str] = None,
 ) -> None:
     """Handle 'vibe resume <ticket>': pick a piece of work back up.
 
@@ -887,6 +890,8 @@ def _handle_resume(
         codex: Whether --codex flag was provided
         claude: Whether --claude flag was provided
         local: Whether --local flag was provided
+        vm: The --vm flag value (tart VM name) for the remote target, or None
+        host: The --host flag value (user@host) for the remote target, or None
 
     Raises:
         typer.Exit: Always — with the session's exit code, or 1 on errors
@@ -927,6 +932,16 @@ def _handle_resume(
         )
         raise typer.Exit(1)
 
+    # Resolve the SSH target before prompting for anything else so an
+    # unreachable --vm/--host fails fast. Not needed for a local resume.
+    ssh_target: Target | None = None
+    if not local:
+        try:
+            ssh_target = resolve_target(vm=vm, host=host)
+        except TargetError as exc:
+            console.print(f"[red]Error:[/] {exc}")
+            raise typer.Exit(1)
+
     remote_shell = None if local else _resolve_remote_shell()
     is_powershell = remote_shell == Shell.POWERSHELL
     tool_name, base_cmd = _resolve_resume_tool(
@@ -963,12 +978,15 @@ def _handle_resume(
                 return connect_locally(target.path, coding_tool=command)
         else:
             def launch(command: str) -> int:
+                assert ssh_target is not None  # set whenever not local
                 return connect_to_remote(
                     repo_name=repo,
                     worktree_name=branch_to_worktree_dirname(branch),
                     with_coding_tool=True,
                     coding_tool=command,
+                    user_host=ssh_target.user_host,
                     remote_shell=remote_shell,
+                    ssh_opts=ssh_target.ssh_opts,
                 )
     else:
         # Resuming on the main checkout (stranded-branch in-place, or a
@@ -981,11 +999,14 @@ def _handle_resume(
                 return connect_locally(repo_root, coding_tool=command)
         else:
             def launch(command: str) -> int:
+                assert ssh_target is not None  # set whenever not local
                 return connect_to_remote_path(
                     remote_path=remote_main,
                     with_coding_tool=True,
                     coding_tool=command,
+                    user_host=ssh_target.user_host,
                     remote_shell=remote_shell,
+                    ssh_opts=ssh_target.ssh_opts,
                 )
 
     exit_code = _launch_resume(
@@ -1049,6 +1070,19 @@ def main(
         "--claude",
         help="Use Claude Code as the coding tool.",
     ),
+    vm: Optional[str] = typer.Option(
+        None,
+        "--vm",
+        help="Connect to a specific VM by its tart name (resolved via `tart ip`). "
+        "Disambiguates cloned VMs that share the vibecoding.local hostname. "
+        "Defaults to $VIBE_VM.",
+    ),
+    host: Optional[str] = typer.Option(
+        None,
+        "--host",
+        help="Connect to an explicit user@host, e.g. a VM on other hardware. "
+        "Overrides --vm. Defaults to $VIBE_SSH_HOST.",
+    ),
 ) -> None:
     """Git worktree manager for remote development sessions.
 
@@ -1066,6 +1100,8 @@ def main(
         vibe --cli                        # SSH to home directory
         vibe --cli feature-branch         # Create worktree, SSH shell only
         vibe --local feature-branch       # Work locally (prompts for tool)
+        vibe feature-branch --vm beta     # Connect to the 'beta' tart VM
+        vibe --cli --host admin@box.local # Connect to an explicit host
         vibe --clean                      # Clean all worktrees
         vibe --clean feature-branch       # Clean specific worktree
 
@@ -1084,10 +1120,32 @@ def main(
         )
         raise typer.Exit(1)
 
+    def _target() -> Target:
+        """Resolve the SSH target, exiting cleanly on failure.
+
+        Resolved lazily: only the remote branches call this, so a --vm never
+        shells out to `tart ip` for purely local operations.
+        """
+        try:
+            return resolve_target(vm=vm, host=host)
+        except TargetError as exc:
+            console.print(f"[red]Error:[/] {exc}")
+            raise typer.Exit(1)
+
+    def _warn_target_ignored(mode: str) -> None:
+        """Warn that a chosen VM/host has no effect for a local-only mode."""
+        if vm or host:
+            console.print(
+                f"[yellow]Warning:[/] --vm/--host is ignored with {mode} "
+                "(no remote connection is made)."
+            )
+
     # Handle 'vibe resume <ticket>' — the literal 'resume' as first
     # positional routes to the NSProject resume flow
     if branch == "resume":
-        _handle_resume(ticket, oc=oc, codex=codex, claude=claude, local=local)
+        _handle_resume(
+            ticket, oc=oc, codex=codex, claude=claude, local=local, vm=vm, host=host
+        )
         return  # pragma: no cover — _handle_resume always raises typer.Exit
 
     # A second positional is only valid as 'vibe resume <ticket-id>'
@@ -1100,6 +1158,7 @@ def main(
 
     # Handle --clean option
     if clean:
+        _warn_target_ignored("--clean")
         if branch is None:
             # Clean all worktrees
             clean_all_worktrees()
@@ -1124,8 +1183,13 @@ def main(
     if cli:
         if branch is None:
             # Just SSH to home directory
+            target = _target()
             remote_shell = _resolve_remote_shell()
-            exit_code = connect_to_remote_home(remote_shell=remote_shell)
+            exit_code = connect_to_remote_home(
+                user_host=target.user_host,
+                remote_shell=remote_shell,
+                ssh_opts=target.ssh_opts,
+            )
             raise typer.Exit(exit_code)
 
         # SSH with worktree but no coding tool
@@ -1144,18 +1208,22 @@ def main(
         if not setup_worktree(branch, effective_from, repo_info.name, repo_info.root):
             raise typer.Exit(1)
 
+        target = _target()
         remote_shell = _resolve_remote_shell()
         exit_code = connect_to_remote(
             repo_name=repo_info.name,
             worktree_name=branch_to_worktree_dirname(branch),
             with_coding_tool=False,
+            user_host=target.user_host,
             remote_shell=remote_shell,
+            ssh_opts=target.ssh_opts,
         )
         _run_post_session_cleanup(repo_info.name, branch, repo_info.main_root)
         raise typer.Exit(exit_code)
 
     # Handle --local option
     if local:
+        _warn_target_ignored("--local")
         if branch is None:
             console.print("[red]Error:[/] --local requires a branch name")
             console.print("Usage: vibe --local <worktree_name> [--from base_branch]")
@@ -1203,13 +1271,16 @@ def main(
                 f"in '{context.repo_name}'..."
             )
 
+        target = _target()
         remote_shell = _resolve_remote_shell()
         coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
         exit_code = connect_to_remote_path(
             remote_path=context.remote_path,
             with_coding_tool=True,
             coding_tool=coding_tool,
+            user_host=target.user_host,
             remote_shell=remote_shell,
+            ssh_opts=target.ssh_opts,
         )
         if (
             context.context_type == ContextType.WORKTREE
@@ -1236,6 +1307,7 @@ def main(
     if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
         raise typer.Exit(1)
 
+    target = _target()
     remote_shell = _resolve_remote_shell()
     coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
     exit_code = connect_to_remote(
@@ -1243,7 +1315,9 @@ def main(
         worktree_name=branch_to_worktree_dirname(branch),
         with_coding_tool=True,
         coding_tool=coding_tool,
+        user_host=target.user_host,
         remote_shell=remote_shell,
+        ssh_opts=target.ssh_opts,
     )
     _run_post_session_cleanup(repo_info.name, branch, repo_info.main_root)
     raise typer.Exit(exit_code)

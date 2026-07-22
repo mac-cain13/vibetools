@@ -88,6 +88,10 @@ _Base vibe VM ready._
 
 - General > About: Set local hostname to `Vibecoding VM`
 - Sharing: Change hostname to `vibecoding`
+  - _Note:_ `vibe` no longer connects over mDNS — it addresses local VMs by their
+    **tart name** and resolves the IP via `tart ip`. This hostname is now only
+    for self-identification (shell prompt, anything served on the local network),
+    not for connectivity. See "Running multiple VMs side by side" below.
 - Login to gh with `gh auth login` use the personal access token from 1Password (has reduces permissions)
 - Login into Xcodes & install latest Xcode: 
   - `xcodes install --latest --experimental-unxip`
@@ -122,3 +126,50 @@ _Note:_ For Xcode to be able to build over SSH you need to unlock the keychain b
 - SSH into the VM: `ssh -i ~/.ssh/id_vibecoding admin@$(tart ip vibecoding)`
 
 _Tip: You can also use the Apple Screen Sharing app to get to the VM._
+
+## Running multiple VMs side by side
+
+You can clone the template more than once and run the clones concurrently — for
+example, one on a macOS beta and one reserved for GUI-heavy automation so long
+agent runs don't block each other.
+
+```bash
+# Clone the template under distinct tart names
+tart clone tahoe-vibecoding-template vibecoding
+tart clone tahoe-vibecoding-template vibecoding-beta
+
+# Run both (each gets its own IP from tart)
+tart run vibecoding --no-graphics --suspendable
+tart run vibecoding-beta --no-graphics --suspendable
+```
+
+Connect to a specific clone with `vibe --vm <tart-name>`; vibe resolves the
+right instance via `tart ip`, so the shared `vibecoding` guest hostname (which
+would make every clone answer to `vibecoding.local`) is never used to pick a
+machine:
+
+```bash
+vibe feature-branch --vm vibecoding-beta      # start work on the beta clone
+export VIBE_VM=vibecoding-beta && vibe --cli   # or set a default for the shell
+```
+
+See the "Selecting a VM" section in the top-level `README.md` for the full
+resolution precedence and host-key handling.
+
+**Optional but recommended — give each clone a distinct hostname.** Selecting
+the VM works without this, but both clones still *identify* as `vibecoding`
+(shell prompt, and anything a coding agent serves back over the local network
+resolves to the ambiguous `vibecoding.local`). To make each clone
+self-identifying, set a unique hostname once per clone (from inside the guest):
+
+```bash
+sudo scutil --set HostName vibecoding-beta
+sudo scutil --set LocalHostName vibecoding-beta
+sudo scutil --set ComputerName "Vibecoding Beta"
+```
+
+> **Shared drive caution:** every clone mounts the *same* host worktree drive.
+> Running two clones is safe as long as they work in **different** worktrees;
+> pointing two at the same branch/worktree at once risks git index/ref races
+> over SMB. Sizing: the template is 16 CPU / 32 GB, so two clones want ~32
+> vCPU / 64 GB of host headroom on top of the host itself.

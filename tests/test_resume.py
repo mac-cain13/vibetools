@@ -337,11 +337,13 @@ class TestResumeMatrix:
             "vibe.target.tart_ip", return_value="10.0.0.7"
         ) as mock_ip, patch(
             "vibe.cli.connect_to_remote", return_value=0
-        ) as mock_connect:
+        ) as mock_connect, patch.multiple(
+            "vibe.target", VM_PREFIX="vibecoding-", DEFAULT_VM="vibecoding"
+        ):
             result = runner.invoke(app, ["resume", "TST_VM", "--vm", "beta"])
 
         assert result.exit_code == 0
-        mock_ip.assert_called_once_with("beta")
+        mock_ip.assert_called_once_with("vibecoding-beta")
         kwargs = mock_connect.call_args.kwargs
         assert kwargs["user_host"] == f"{DEFAULT_USER}@10.0.0.7"
         assert kwargs["ssh_opts"] == EPHEMERAL_HOSTKEY_OPTS

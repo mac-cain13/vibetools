@@ -157,14 +157,15 @@ tart run vibecoding --no-graphics --suspendable
 tart run vibecoding-beta --no-graphics --suspendable
 ```
 
-Connect to a specific clone with `vibe --vm <tart-name>`; vibe resolves the
-right instance via `tart ip`, so the shared `vibecoding` guest hostname (which
-would make every clone answer to `vibecoding.local`) is never used to pick a
-machine:
+Connect to a specific clone with `vibe --vm <name>`; vibe resolves the right
+instance via `tart ip`, so the shared `vibecoding` guest hostname (which would
+make every clone answer to `vibecoding.local`) is never used to pick a machine.
+AI-work clones share a `vibecoding-` prefix, so `--vm` takes a short name and
+expands it (`--vm beta` → `vibecoding-beta`); full names work too:
 
 ```bash
-vibe feature-branch --vm vibecoding-beta      # start work on the beta clone
-export VIBE_VM=vibecoding-beta && vibe --cli   # or set a default for the shell
+vibe feature-branch --vm beta       # start work on the vibecoding-beta clone
+export VIBE_VM=beta && vibe --cli   # or set a default for the shell
 ```
 
 See the "Selecting a VM" section in the top-level `README.md` for the full

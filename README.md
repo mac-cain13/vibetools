@@ -110,20 +110,23 @@ Local VMs are addressed by their **tart name**, not by mDNS. By default **vibe**
 connects to `config.DEFAULT_VM` (`vibecoding`), resolving its current IP with
 `tart ip` — so `.local` name collisions between clones never come into play. To
 run several clones at once — e.g. one on a macOS beta, one reserved for
-GUI-heavy automation — just name the one you want:
+GUI-heavy automation — just name the one you want. VMs dedicated to AI work
+share a `vibecoding-` prefix, so `--vm` takes a **short name** and expands it
+(`--vm beta` → `vibecoding-beta`); this keeps invocations terse and guards
+against accidentally targeting an unrelated VM. Full names still work:
 
 ```bash
 # Default: the `vibecoding` tart VM, resolved via `tart ip`
 vibe feature-branch --claude
 
-# A different clone by its tart name
-vibe feature-branch --vm vibecoding-beta
+# A different clone by short name — expands to `vibecoding-beta`
+vibe feature-branch --vm beta
 
 # An explicit host — e.g. a VM on other hardware / over Tailscale
 vibe --cli --host admin@mac-mini.tailnet.ts.net
 
 # Set a default target for the shell so you don't repeat the flag
-export VIBE_VM=vibecoding-beta
+export VIBE_VM=beta   # also prefix-expanded to `vibecoding-beta`
 vibe feature-branch --claude
 ```
 
@@ -132,7 +135,10 @@ Resolution precedence (first match wins): `--host` → `--vm` → `$VIBE_SSH_HOS
 (only when no default VM is configured, e.g. WSL, which has no tart). `--vm` /
 `$VIBE_VM` / `DEFAULT_VM` all name a **tart VM** and resolve to `<user>@<ip>` via
 `tart ip`; this replaces mDNS, which was ambiguous because cloned VMs share the
-`vibecoding` guest hostname (they would all answer to `vibecoding.local`).
+`vibecoding` guest hostname (they would all answer to `vibecoding.local`). Short
+`--vm` / `$VIBE_VM` names are expanded with the `vibecoding-` prefix
+(`config.VM_PREFIX`); the bare default (`vibecoding`) and already-prefixed names
+pass through unchanged.
 Because tart clones share an SSH host key and get DHCP addresses, tart-resolved
 connections auto-accept the host key and keep it out of your `known_hosts`, so a
 reassigned address never triggers a blocking host-key mismatch.
@@ -194,8 +200,10 @@ Options:
   --clean        Clean worktrees. Without branch, cleans all.
                  With branch, cleans specific worktree.
   --from TEXT    Base branch to create new branch from.
-  --vm TEXT      Connect to a specific VM by its tart name (resolved via
-                 `tart ip`). Disambiguates clones. Defaults to $VIBE_VM.
+  --vm TEXT      Connect to an AI-work VM by its short name; the `vibecoding-`
+                 prefix is added automatically (e.g. `--vm goldengate` →
+                 `vibecoding-goldengate`), resolved via `tart ip`. Full names
+                 accepted too. Defaults to $VIBE_VM.
   --host TEXT    Connect to an explicit user@host. Overrides --vm.
                  Defaults to $VIBE_SSH_HOST.
   -h, --help     Show help message and exit.

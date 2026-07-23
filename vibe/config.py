@@ -20,6 +20,12 @@ if _platform == Platform.MACOS:
     # hostname. Override per-invocation with --vm/--host or $VIBE_VM.
     DEFAULT_VM: str | None = "vibecoding"
 
+    # Short --vm names are expanded with this prefix so VMs dedicated to AI work
+    # share one namespace: `--vm goldengate` → `vibecoding-goldengate`. Keeps
+    # invocations terse and guards against connecting to an unrelated VM. The
+    # bare default (DEFAULT_VM) and already-prefixed names pass through unchanged.
+    VM_PREFIX: str = "vibecoding-"
+
     # SSH configuration. Legacy mDNS host — no longer used for the default path
     # (see DEFAULT_VM); kept as the source of the default SSH username and as an
     # explicit escape hatch (`--host admin@vibecoding.local`).
@@ -45,6 +51,10 @@ else:  # WSL
 
     # No tart on Windows/WSL hosts — connect to the static host directly.
     DEFAULT_VM: str | None = None
+
+    # No tart VMs here, so there is nothing to prefix (an empty prefix is a
+    # no-op in target resolution).
+    VM_PREFIX: str = ""
 
     # SSH configuration
     SSH_USER_HOST = "admin@172.21.0.10"

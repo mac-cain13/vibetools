@@ -1260,10 +1260,15 @@ class TestTargetSelection:
         mock_setup.return_value = True
         mock_connect.return_value = 0
 
-        result = runner.invoke(app, ["feature-branch", "--claude", "--vm", "beta"])
+        with patch.multiple(
+            "vibe.target", VM_PREFIX="vibecoding-", DEFAULT_VM="vibecoding"
+        ):
+            result = runner.invoke(
+                app, ["feature-branch", "--claude", "--vm", "beta"]
+            )
 
         assert result.exit_code == 0
-        mock_tart_ip.assert_called_once_with("beta")
+        mock_tart_ip.assert_called_once_with("vibecoding-beta")
         mock_connect.assert_called_once_with(
             repo_name="test-repo",
             worktree_name="feature-branch",

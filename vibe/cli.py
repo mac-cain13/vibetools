@@ -1073,9 +1073,10 @@ def main(
     vm: Optional[str] = typer.Option(
         None,
         "--vm",
-        help="Connect to a specific VM by its tart name (resolved via `tart ip`). "
-        "Disambiguates cloned VMs that share the vibecoding.local hostname. "
-        "Defaults to $VIBE_VM.",
+        help="Connect to an AI-work VM by its short name; the `vibecoding-` "
+        "prefix is added automatically (e.g. `--vm goldengate` → "
+        "`vibecoding-goldengate`), resolved via `tart ip`. Full names are "
+        "accepted too. Defaults to $VIBE_VM.",
     ),
     host: Optional[str] = typer.Option(
         None,
@@ -1100,7 +1101,7 @@ def main(
         vibe --cli                        # SSH to home directory
         vibe --cli feature-branch         # Create worktree, SSH shell only
         vibe --local feature-branch       # Work locally (prompts for tool)
-        vibe feature-branch --vm beta     # Connect to the 'beta' tart VM
+        vibe feature-branch --vm beta     # Connect to the 'vibecoding-beta' VM
         vibe --cli --host admin@box.local # Connect to an explicit host
         vibe --clean                      # Clean all worktrees
         vibe --clean feature-branch       # Clean specific worktree

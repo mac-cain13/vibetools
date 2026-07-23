@@ -15,6 +15,7 @@ from vibe.target import (
     ENV_VM,
     Target,
     TargetError,
+    expand_vm_name,
     resolve_target,
     tart_ip,
 )
@@ -70,6 +71,33 @@ class TestTartIp:
                 tart_ip("beta")
 
 
+class TestExpandVmName:
+    """Tests for expand_vm_name() short-name expansion."""
+
+    @pytest.fixture(autouse=True)
+    def _macos_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pin the macOS prefix/default so tests hold on any host."""
+        monkeypatch.setattr("vibe.target.VM_PREFIX", "vibecoding-")
+        monkeypatch.setattr("vibe.target.DEFAULT_VM", "vibecoding")
+
+    def test_short_name_gets_prefix(self) -> None:
+        """A bare name is expanded to the vibecoding- namespace."""
+        assert expand_vm_name("goldengate") == "vibecoding-goldengate"
+
+    def test_already_prefixed_name_passes_through(self) -> None:
+        """A full name keeps working — no double prefix."""
+        assert expand_vm_name("vibecoding-goldengate") == "vibecoding-goldengate"
+
+    def test_bare_default_passes_through(self) -> None:
+        """The default VM name is left alone, not turned into a clone name."""
+        assert expand_vm_name("vibecoding") == "vibecoding"
+
+    def test_empty_prefix_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With no prefix configured (e.g. WSL) names pass through verbatim."""
+        monkeypatch.setattr("vibe.target.VM_PREFIX", "")
+        assert expand_vm_name("goldengate") == "goldengate"
+
+
 class TestResolveTarget:
     """Tests for resolve_target() precedence and shapes."""
 
@@ -112,11 +140,15 @@ class TestResolveTarget:
         assert target.user_host == "admin@mac-mini.ts.net"
         assert target.ssh_opts == []
 
-    def test_vm_flag_resolves_via_tart(self) -> None:
-        """--vm resolves to <user>@<ip> and carries ephemeral host-key opts."""
+    def test_vm_flag_resolves_via_tart(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--vm expands the prefix, resolves to <user>@<ip>, carries opts."""
+        monkeypatch.setattr("vibe.target.VM_PREFIX", "vibecoding-")
+        monkeypatch.setattr("vibe.target.DEFAULT_VM", "vibecoding")
         with patch("vibe.target.tart_ip", return_value="10.0.0.5") as mock_ip:
             target = resolve_target(vm="beta")
-        mock_ip.assert_called_once_with("beta")
+        mock_ip.assert_called_once_with("vibecoding-beta")
         assert target.user_host == f"{DEFAULT_USER}@10.0.0.5"
         assert target.ssh_opts == EPHEMERAL_HOSTKEY_OPTS
         # A copy, not the shared module constant, so callers can't mutate it.
@@ -134,11 +166,13 @@ class TestResolveTarget:
 
     def test_vm_flag_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An explicit --vm wins over the env defaults."""
+        monkeypatch.setattr("vibe.target.VM_PREFIX", "vibecoding-")
+        monkeypatch.setattr("vibe.target.DEFAULT_VM", "vibecoding")
         monkeypatch.setenv(ENV_VM, "env-vm")
         monkeypatch.setenv(ENV_SSH_HOST, "admin@from-env")
         with patch("vibe.target.tart_ip", return_value="10.0.0.9") as mock_ip:
             target = resolve_target(vm="flag-vm")
-        mock_ip.assert_called_once_with("flag-vm")
+        mock_ip.assert_called_once_with("vibecoding-flag-vm")
         assert target.user_host == f"{DEFAULT_USER}@10.0.0.9"
 
     def test_env_ssh_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,10 +196,12 @@ class TestResolveTarget:
     def test_env_vm_resolves_via_tart(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VIBE_VM resolves through tart when it is the only signal."""
+        """VIBE_VM is prefix-expanded and resolves through tart."""
+        monkeypatch.setattr("vibe.target.VM_PREFIX", "vibecoding-")
+        monkeypatch.setattr("vibe.target.DEFAULT_VM", "vibecoding")
         monkeypatch.setenv(ENV_VM, "env-vm")
         with patch("vibe.target.tart_ip", return_value="10.0.0.42") as mock_ip:
             target = resolve_target()
-        mock_ip.assert_called_once_with("env-vm")
+        mock_ip.assert_called_once_with("vibecoding-env-vm")
         assert target.user_host == f"{DEFAULT_USER}@10.0.0.42"
         assert target.ssh_opts == EPHEMERAL_HOSTKEY_OPTS

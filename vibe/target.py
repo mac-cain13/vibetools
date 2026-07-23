@@ -8,11 +8,17 @@ macOS beta, one for GUI-heavy automation) and pick one with ``--vm``. This
 sidesteps the ambiguity of ``.local`` resolution, which cannot tell clones apart
 because they all inherit the ``vibecoding`` guest hostname.
 
+VMs dedicated to AI work share a common ``vibecoding-`` prefix, so ``--vm`` (and
+``VIBE_VM``) take a short name that is expanded to the full tart name: ``--vm
+goldengate`` targets ``vibecoding-goldengate``. The bare default (``vibecoding``)
+and names already carrying the prefix pass through unchanged, so full names keep
+working. See ``config.VM_PREFIX``.
+
 Resolution precedence (first match wins):
     1. ``--host user@host``   explicit SSH target
-    2. ``--vm <tart-name>``   resolved to ``<user>@<ip>`` via ``tart ip``
+    2. ``--vm <name>``        prefix-expanded, resolved to ``<user>@<ip>`` via ``tart ip``
     3. ``VIBE_SSH_HOST`` env  explicit SSH target
-    4. ``VIBE_VM`` env        resolved via ``tart ip``
+    4. ``VIBE_VM`` env        prefix-expanded, resolved via ``tart ip``
     5. ``config.DEFAULT_VM``  the default local VM, resolved via ``tart ip``
     6. ``config.SSH_USER_HOST``  static host, only when there is no default VM
        (e.g. WSL, which has no tart)
@@ -28,7 +34,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 
-from vibe.config import DEFAULT_VM, SSH_USER_HOST
+from vibe.config import DEFAULT_VM, SSH_USER_HOST, VM_PREFIX
 from vibe.connection import EPHEMERAL_HOSTKEY_OPTS
 
 # Username used for tart-resolved VMs. Derived from the default SSH target so a
@@ -107,6 +113,27 @@ def tart_ip(name: str) -> str:
     return ip
 
 
+def expand_vm_name(name: str) -> str:
+    """Expand a short --vm name to its full tart VM name.
+
+    VMs dedicated to AI work share a common ``vibecoding-`` prefix
+    (``config.VM_PREFIX``), so a short name like ``goldengate`` addresses the
+    ``vibecoding-goldengate`` clone. This keeps invocations terse and makes it
+    hard to accidentally target an unrelated VM. Names that are already fully
+    qualified — the bare default (``config.DEFAULT_VM``) or anything already
+    carrying the prefix — pass through unchanged, so full names still work.
+
+    Args:
+        name: The VM name as given on ``--vm`` or ``$VIBE_VM``.
+
+    Returns:
+        The fully-qualified tart VM name.
+    """
+    if not VM_PREFIX or name == DEFAULT_VM or name.startswith(VM_PREFIX):
+        return name
+    return f"{VM_PREFIX}{name}"
+
+
 def _target_for_vm(name: str) -> Target:
     """Build a Target for a tart VM by resolving its IP.
 
@@ -131,13 +158,16 @@ def resolve_target(vm: str | None = None, host: str | None = None) -> Target:
     """Resolve the SSH target for this session.
 
     Applies the documented precedence: an explicit ``--host`` wins, then
-    ``--vm`` (resolved via tart), then the ``VIBE_SSH_HOST`` / ``VIBE_VM``
-    environment defaults, then the default local VM (``config.DEFAULT_VM``,
-    resolved via tart), and finally — only when no default VM is configured —
-    the static ``config.SSH_USER_HOST``.
+    ``--vm`` (prefix-expanded, resolved via tart), then the ``VIBE_SSH_HOST`` /
+    ``VIBE_VM`` environment defaults, then the default local VM
+    (``config.DEFAULT_VM``, resolved via tart), and finally — only when no
+    default VM is configured — the static ``config.SSH_USER_HOST``.
+
+    Short ``--vm`` / ``VIBE_VM`` names are expanded with ``config.VM_PREFIX``
+    (see :func:`expand_vm_name`) before resolution.
 
     Args:
-        vm: The ``--vm`` flag value (a tart VM name), or None.
+        vm: The ``--vm`` flag value (a short or full tart VM name), or None.
         host: The ``--host`` flag value (a ``user@host`` string), or None.
 
     Returns:
@@ -152,14 +182,14 @@ def resolve_target(vm: str | None = None, host: str | None = None) -> Target:
     if host:
         return Target(user_host=host)
     if vm:
-        return _target_for_vm(vm)
+        return _target_for_vm(expand_vm_name(vm))
 
     env_host = os.environ.get(ENV_SSH_HOST)
     if env_host:
         return Target(user_host=env_host)
     env_vm = os.environ.get(ENV_VM)
     if env_vm:
-        return _target_for_vm(env_vm)
+        return _target_for_vm(expand_vm_name(env_vm))
 
     # No explicit selection. Address the default local VM by its tart name
     # (resolved to a fresh IP) rather than mDNS. Hosts without a tart default

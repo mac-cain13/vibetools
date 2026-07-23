@@ -5,6 +5,11 @@ set -euo pipefail
 # It never builds — so it cannot cause a second build of work the agent just compiled.
 # Run it from inside the project's git repo (any worktree).
 #
+# This is also how you *update* a delivery: re-run it with the new build and it replaces
+# the previous bundle in place, atomically, at the same path. Never mv/cp a .app into
+# place by hand — moving a bundle onto an existing .app folder of the same name nests it
+# inside instead of replacing it. Let this script own the delivered folder.
+#
 #   deliver-mac-app "/path/to/DerivedData/.../My App.app"
 
 APP="${1:-}"
@@ -62,4 +67,12 @@ Bundle id:  $(plutil -extract CFBundleIdentifier raw -o - "$DEST/$APP_NAME/Conte
 Signed by:  $(codesign -dvv "$DEST/$APP_NAME" 2>&1 | awk -F'=' '/^Authority/{print $2; exit}')
 EOF
 
-echo "$DEST/$APP_NAME"
+# The build lands under /Volumes/Repositories on the VM; the host reaches the same files
+# through the /Volumes/External/Repositories symlink. Print the host-valid path so it
+# resolves when the user clicks it on the host.
+HOST_APP="$DEST/$APP_NAME"
+case "$HOST_APP" in
+  /Volumes/Repositories/*) HOST_APP="/Volumes/External/Repositories/${HOST_APP#/Volumes/Repositories/}";;
+esac
+
+echo "$HOST_APP"

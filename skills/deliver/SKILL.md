@@ -1,6 +1,6 @@
 ---
 name: deliver
-description: Hand the user a build they can click to run — build the app, then drop a signed, double-clickable .app in a folder on their machine and give them the path. Use when you've finished a user-visible change to a macOS app and the user would benefit from clicking through it, or when they ask for a build ("give me the app", "let me test it", "can I try it"). macOS only today; iOS and web delivery are not implemented yet.
+description: Hand the user a build they can run — for macOS, drop a signed, double-clickable .app in a folder and give them the path; for iOS, drop the signed device build in a folder and print the xcrun command they paste to install it on their connected iPhone. Use when you've finished a user-visible change and the user would benefit from trying it, or when they ask for a build ("give me the app", "let me test it", "can I try it"). macOS and iOS (physical device) today; iOS Simulator and web delivery are not implemented yet.
 ---
 
 # Deliver — hand the user something they can click
@@ -20,7 +20,11 @@ user asked for a code review.
 ## The two steps
 
 Building is different in every project. Delivering is the same everywhere, so it's a
-script. You do the first part; `deliver-mac-app` does the second.
+script. You do the first part; `deliver-mac-app` does the second — and it is the only
+thing that touches the delivered folder. You never place, move, rename, or copy the
+`.app` yourself, on a first delivery or an update. Hand-moving a bundle onto a folder
+that already holds a `.app` of the same name nests the new one *inside* the old instead
+of replacing it — the exact silent failure this script exists to prevent.
 
 ### 1. Build it — signed, once
 
@@ -63,8 +67,15 @@ stale app.
 
 It figures out where the build belongs from git alone — no configuration, in any
 project, from any worktree. It refuses to deliver an app that would crash on launch,
-writes a `BUILD-INFO.txt` next to the app recording branch/commit/dirty state, and
-prints the delivered path.
+stages the copy and swaps it into place so a half-copied or nested bundle never lands at
+the clickable path, writes a `BUILD-INFO.txt` next to the app recording
+branch/commit/dirty state, and prints the delivered path.
+
+**Updating a delivered build is this same command, again.** Re-run it with the new build
+and it replaces the previous bundle in place, at the same path the user is already
+clicking. Keep pointing them at that path — don't move the delivered app somewhere
+"nicer", and never `mv`/`cp` a fresh `.app` over the delivered one to freshen it. That
+hand-move is exactly where the nesting trap bites; let the script do the replace.
 
 Then tell the user, in one line: the clickable path, and what's in the build (the
 branch and what changed). Parallel worktrees get their own folder per branch, so two
@@ -84,8 +95,54 @@ agents working at once never overwrite each other's build.
 - **Replacing a running app** is confusing — if a copy is already open, ask them to quit
   it first. The script warns when it sees one.
 
-## Other platforms
+## iOS — deliver to a physical device
 
-Not implemented yet — this skill only delivers macOS apps today. iOS builds to a
-physical device, and web apps over a tunnel, are the intended next steps. If asked for
+Same shape as macOS: build signed once, then a script copies the app into the same
+git-derived `_Builds/<project>/<branch>/` folder. The difference is the last step — an
+iOS `.app` can't launch on the Mac, so instead of a clickable app you hand the user a
+ready-to-paste `xcrun` command that installs it on their connected iPhone.
+
+### 1. Build it — signed, for a device
+
+Build the iOS scheme for a *device* destination (not the simulator), signed:
+
+```bash
+xcodebuild -project <proj> -scheme <scheme> \
+  -destination 'generic/platform=iOS' -allowProvisioningUpdates \
+  -derivedDataPath <dd> | xcbeautify
+```
+
+`generic/platform=iOS` (not `iOS Simulator`) is what makes it a device build; a simulator
+or unsigned build can't install on a phone. The target device must already be registered
+to the signing team — a one-time step done from Xcode or the developer portal. Same two
+rules as macOS: build signed (never `CODE_SIGNING_ALLOWED=NO`), and don't build twice —
+reuse the DerivedData path you compile-checked with.
+
+### 2. Deliver it
+
+```bash
+BUILT=$(xcodebuild -showBuildSettings -project <proj> -scheme <scheme> \
+  -destination 'generic/platform=iOS' -derivedDataPath <same-dd> 2>/dev/null \
+  | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{d=$2} / FULL_PRODUCT_NAME = /{n=$2} END{print d"/"n}')
+~/.claude/skills/deliver/deliver-ios-device "$BUILT"
+```
+
+Pass `-showBuildSettings` the *same* flags you built with (above all `-derivedDataPath`),
+for the same reason as macOS: omit them and it resolves some other build entirely.
+
+`deliver-ios-device` verifies the signature and that an `embedded.mobileprovision` is
+present — refusing a simulator or unsigned build that wouldn't install — stages the copy
+and swaps it into the git-derived folder so no half-copied or nested bundle lands at the
+install path, writes `BUILD-INFO.txt`, and prints the `xcrun devicectl device install app`
+command to paste on the host. As with macOS, updating is this same command again — it
+replaces the delivered bundle in place; never `mv`/`cp` a fresh `.app` over it by hand.
+
+Give the user that printed command verbatim, plus a one-line note of what's in the build.
+They paste it in a Terminal on the host with the iPhone connected and unlocked, and the
+app installs to the home screen. The device UDID has a personal default baked in for now;
+pass a different UDID as the second argument to override it.
+
+## Still not implemented
+
+The iOS *Simulator* path and web apps over a tunnel are not built yet. If asked for
 either, say so rather than improvising a delivery mechanism.

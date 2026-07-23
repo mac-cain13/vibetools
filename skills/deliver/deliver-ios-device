@@ -1,0 +1,104 @@
+#!/bin/bash
+set -euo pipefail
+
+# Delivers an already-built iOS *device* .app to a folder on the shared drive, then
+# prints the xcrun command to paste in a Terminal on the host to install it onto a
+# physically-connected iPhone. It never builds — so it cannot cause a second build of
+# work the agent just compiled. Run it from inside the project's git repo (any worktree).
+#
+# This is also how you *update* a delivery: re-run it with the new build and it replaces
+# the previous bundle in place, atomically, at the same path. Never mv/cp a .app into
+# place by hand — moving a bundle onto an existing .app folder of the same name nests it
+# inside instead of replacing it. Let this script own the delivered folder.
+#
+#   deliver-ios-device "/path/to/DerivedData/.../My App.app" [device-udid]
+
+APP="${1:-}"
+[ -n "$APP" ] && [ -d "$APP" ] || { echo "usage: deliver-ios-device <path-to-.app> [device-udid]"; exit 2; }
+APP="${APP%/}"; APP_NAME="$(basename "$APP")"
+
+# Default to the registered iPhone; override with the 2nd arg once we parameterize.
+DEVICE_UDID="${2:-7CD4831D-7028-5540-89EE-C99B162DB69B}"
+
+# Destination comes from git alone, so no project ever needs configuring.
+# --path-format=absolute matters: a main checkout otherwise reports a relative
+# ".git", and the project name resolves to ".".
+GIT_COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
+  echo "Not in a git repository — can't work out where this build belongs."; exit 1; }
+CANONICAL="$(dirname "$GIT_COMMON")"      # the main checkout, even when run from a worktree
+PROJECT="$(basename "$CANONICAL")"
+DROP_ROOT="$(dirname "$CANONICAL")/_Builds"
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" = "HEAD" ] && BRANCH="detached-$(git rev-parse --short HEAD)"
+BRANCH="${BRANCH//\//-}"                   # keep one directory level per branch
+DEST="$DROP_ROOT/$PROJECT/$BRANCH"
+
+# A broken signature doesn't fail here — it fails as an unexplained install error after
+# the user pastes the command. Refuse now, while there's still a build log to read.
+if ! codesign --verify --deep --strict "$APP" 2>/dev/null; then
+  echo "✗ $APP_NAME fails signature verification — it wouldn't install."
+  echo "  Rebuild signed (-allowProvisioningUpdates, no CODE_SIGNING_ALLOWED=NO)."; exit 1
+fi
+# iOS device builds embed a .mobileprovision (simulator builds don't) — its absence means
+# this is a simulator build or an unsigned one, neither of which installs on a phone.
+if [ ! -f "$APP/embedded.mobileprovision" ]; then
+  echo "✗ $APP_NAME has no embedded provisioning profile — it won't install on a device."
+  echo "  Build for a device destination (generic/platform=iOS), signed with a real team."; exit 1
+fi
+
+mkdir -p "$DEST"
+# ditto, not cp: preserves framework symlinks and the signature.
+# Stage then swap, so a half-copied bundle never sits at the path being installed.
+STAGING="$DEST/.staging"; rm -rf "$STAGING"; mkdir -p "$STAGING"
+ditto "$APP" "$STAGING/$APP_NAME"
+rm -rf "${DEST:?}/$APP_NAME"
+mv "$STAGING/$APP_NAME" "$DEST/$APP_NAME"; rmdir "$STAGING"
+
+# The launch command takes the bundle id, not a path — pull it from the delivered app.
+BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw -o - "$DEST/$APP_NAME/Info.plist" 2>/dev/null || true)"
+
+cat > "$DEST/BUILD-INFO.txt" <<EOF
+$APP_NAME (iOS device build)
+Built:      $(date "+%Y-%m-%d %H:%M:%S")
+Project:    $PROJECT
+Branch:     $(git rev-parse --abbrev-ref HEAD)
+Commit:     $(git log -1 --format='%h %s' 2>/dev/null)
+Dirty:      $([ -n "$(git status --porcelain 2>/dev/null)" ] && echo "yes — uncommitted changes are in this build" || echo "no")
+Bundle id:  ${BUNDLE_ID:-(unknown)}
+Signed by:  $(codesign -dvv "$DEST/$APP_NAME" 2>&1 | awk -F'=' '/^Authority/{print $2; exit}')
+EOF
+
+# The build lands under /Volumes/Repositories on the VM; the host reaches the same files
+# through the /Volumes/External/Repositories symlink. Print the host-valid path so the
+# command pastes and resolves on the host.
+HOST_APP="$DEST/$APP_NAME"
+case "$HOST_APP" in
+  /Volumes/Repositories/*) HOST_APP="/Volumes/External/Repositories/${HOST_APP#/Volumes/Repositories/}";;
+esac
+
+# The one-liner: install, then (if we have the bundle id) launch. && so launch only runs
+# on a successful install.
+INSTALL="xcrun devicectl device install app --device $DEVICE_UDID \"$HOST_APP\""
+if [ -n "$BUNDLE_ID" ]; then
+  CMD="$INSTALL && xcrun devicectl device process launch --device $DEVICE_UDID $BUNDLE_ID"
+else
+  CMD="$INSTALL"
+fi
+
+# iTerm2's command URL scheme: iterm2:/command?c=<percent-encoded>&silent
+# jq @uri percent-encodes every reserved char — crucially the command's own && becomes
+# %26%26, so it isn't read as a URL separator. &silent (valueless) runs it with no
+# confirmation window and no output: click and forget.
+ENC="$(jq -rn --arg s "$CMD" '$s|@uri')"
+
+echo "Delivered (host path):"
+echo "  $HOST_APP"
+echo
+echo "Click to install + launch on the iPhone (connected + unlocked), silently:"
+echo
+echo "  iterm2:/command?c=${ENC}&silent"
+echo
+echo "Or paste it by hand:"
+echo
+echo "  $CMD"

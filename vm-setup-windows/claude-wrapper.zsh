@@ -1,6 +1,14 @@
 #!/usr/bin/env zsh
-# Simple, elegant terminal title management for Claude
-# From https://steipete.me/posts/2025/commanding-your-claude-code-army
+# Claude wrapper (cly), plus a terminal title for the shell prompt.
+#
+# cly deliberately does NOT manage the terminal title. Claude Code publishes its
+# own state there — a braille spinner while working, `✳ ` when idle — and that
+# title is the only signal herdr's `working` detection has (its sole other
+# working rule covers a niche overlay; every blocked rule reads the screen body).
+# An earlier version re-asserted "<folder> — Claude" every 0.5s expressly to stop
+# Claude changing it, which left herdr seeing blocked and idle but never working.
+# Claude Code also needs CLAUDE_CODE_DISABLE_TERMINAL_TITLE unset in
+# ~/.claude/settings.json, or it emits no title at all.
 
 # Set the terminal title to a LITERAL string. We deliberately do NOT use
 # `print -P` (prompt expansion): a folder name can contain `%` — vibe encodes
@@ -11,45 +19,12 @@ _set_title() {
     print -n "\e]2;$1\a"
 }
 
-# Decode vibe's worktree-dir encoding (%2F -> /, %25 -> %) for a readable title.
-_vibe_title_name() {
-    local s=${1//"%2F"//}
-    print -r -- "${s//"%25"/%}"
-}
-
-# Claude wrapper with custom terminal title
 cly() {
-    local folder=$(_vibe_title_name "${PWD:t}")  # decoded current folder name
-
-    # Set title to show we're running Claude
-    _set_title "$folder — Claude"
-    
-    # Start a background process to continuously reset the title
-    # (prevents Claude from changing it)
-    (
-        while true; do
-            _set_title "$folder — Claude"
-            sleep 0.5
-        done
-    ) &
-    local title_pid=$!
-    
-    # Run Claude with dangerous permissions
     "$HOME/.local/bin/claude" --dangerously-skip-permissions "$@"
-    local exit_code=$?
-    
-    # Kill the background title setter
-    kill $title_pid 2>/dev/null
-    wait $title_pid 2>/dev/null  # Clean up zombie process
-    
-    # Restore normal title
-    _set_title "${PWD/#$HOME/~}"
-    
-    # Return the original exit code
-    return $exit_code
 }
 
-# Update terminal title before each prompt (using proper ZSH hooks)
+# Title the shell prompt with the cwd. This only runs between commands, never
+# while an agent holds the foreground, so it cannot disturb agent detection.
 _claude_precmd() {
     _set_title "${PWD/#$HOME/~}"
 }

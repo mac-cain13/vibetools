@@ -148,6 +148,57 @@ If the default VM isn't running, resolution fails fast with an actionable error
 name it explicitly: `--host admin@vibecoding.local`.
 
 
+### Running inside herdr
+
+[herdr](https://herdr.dev) classifies a pane's agent by scanning the foreground
+process group for an *eligible* process, then matching that agent's screen
+manifest against the terminal. Shells, `sleep` and `ssh` are **not** eligible, so
+a pane where **vibe** has SSH'd into a VM is not recognised as anything at all.
+
+`HERDR_AGENT` names the manifest to use — but only when set on the eligible
+process, which here is **vibe itself**, not the `ssh` child it spawns. Since
+macOS reads another process's environment from its exec-time image, vibe cannot
+just assign to `os.environ`; it re-execs itself with the variable set. That
+happens automatically when vibe is run inside a herdr pane, before any git work,
+and only once (the hint's presence is what stops it looping). Panes then show up
+as `claude`/`codex`/`opencode` with live idle/working/blocked status.
+
+Requires **herdr 0.7.5+** on macOS (0.7.1+ on Linux) — older builds ignore the
+hint entirely. Check with `herdr --version`.
+
+Setting `HERDR_AGENT` yourself takes precedence and skips the re-exec, which is
+also how you name a manifest vibe does not map:
+
+```bash
+HERDR_AGENT=kimi vibe feature-branch --claude
+```
+
+Shell connections (`--cli`) get no hint — there is no agent in the pane. Check
+the names your herdr build ships with `herdr server agent-manifests` if a pane
+stays unrecognised; the tool→manifest map is `HERDR_AGENT_NAMES` in
+`vibe/herdr.py`, and `herdr agent explain <pane>` shows the matched manifest,
+rule and evidence.
+
+**vibe clears the pane before launching the agent** (inside herdr only). herdr's
+screen rules match against the pane's recent buffer, so anything left on screen
+above the agent keeps being evaluated. That is not cosmetic: Codex's
+`weak_blocker` rule looks for a prompt phrase anywhere in that buffer next to a
+`yes` or a `❯`, so a shell prompt sitting above Codex supplies the `❯` and pins
+the session at `blocked` for as long as it runs. Clearing removes vibe's own
+output too — the screen is briefly blank while SSH connects.
+
+This is a mitigation, not a cure: that rule also accepts the word `yes`, which
+Codex will eventually write itself, and the phrase comes from Codex's ordinary
+replies (*"What would you like to work on?"*). The real fix belongs in herdr's
+`codex` manifest, whose `weak_blocker` scans `whole_recent` rather than the live
+tail, and whose only `idle` rule sits at priority 100 and can never outrank it.
+
+**Terminal titles are left entirely to the agent.** `cly` and `cdx` used to
+re-assert `"<folder> — Claude"` every 0.5s expressly to stop the agent changing
+it, and Claude Code additionally had `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` set.
+Both are gone: the agents encode idle/working/blocked in the OSC title, and
+herdr's detection depends on it. Do not reintroduce title management here.
+
 ### Context-Aware Behavior
 
 **vibe** automatically detects your current git context:

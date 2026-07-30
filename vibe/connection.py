@@ -16,6 +16,7 @@ from vibe.config import (
     UNLOCK_KEYCHAIN,
     wsl_path_to_windows,
 )
+from vibe.herdr import clear_pane
 from vibe.platform import Shell
 from vibe.utils import console
 
@@ -238,6 +239,10 @@ def connect_to_remote(
     ssh_cmd = build_ssh_command(ssh_key, user_host, ssh_opts=ssh_opts)
     ssh_cmd.append(remote_cmd)
 
+    # Clear last, so none of vibe's own output stays above the agent.
+    if with_coding_tool:
+        clear_pane()
+
     result = subprocess.run(ssh_cmd)
 
     if result.returncode == 255:
@@ -324,6 +329,7 @@ def connect_locally(
     # Run the coding tool in the worktree directory. The tool command may
     # carry arguments (e.g. 'cly --resume <session-id>'), so split it into
     # an argv list instead of running it as a bare single-element command.
+    clear_pane()
     result = subprocess.run(shlex.split(coding_tool), cwd=worktree_path)
 
     console.print("Returning to original directory...")
@@ -371,6 +377,10 @@ def connect_to_remote_path(
     # Build and execute SSH command
     ssh_cmd = build_ssh_command(ssh_key, user_host, ssh_opts=ssh_opts)
     ssh_cmd.append(remote_cmd)
+
+    # Clear last, so none of vibe's own output stays above the agent.
+    if with_coding_tool:
+        clear_pane()
 
     result = subprocess.run(ssh_cmd)
 

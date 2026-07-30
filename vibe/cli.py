@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
 from enum import Enum
@@ -61,6 +62,7 @@ from vibe.git_ops import (
     worktree_dirname_to_branch,
     worktree_path_for_branch,
 )
+from vibe.herdr import VIBE_CODING_TOOL_ENV, ensure_agent_hint
 from vibe.platform import Shell
 from vibe.target import Target, TargetError, resolve_target
 from vibe.nsproject import (
@@ -191,6 +193,12 @@ def prompt_coding_tool_choice(powershell: bool = False) -> str:
     Returns:
         The coding tool command to use.
     """
+    # A re-exec that adds the herdr agent hint carries the already-chosen tool
+    # across, so the picker is not shown a second time.
+    preselected = os.environ.get(VIBE_CODING_TOOL_ENV)
+    if preselected:
+        return preselected
+
     from simple_term_menu import TerminalMenu
 
     options = ["Claude", "Codex", "OpenCode"]
@@ -354,6 +362,7 @@ def _resolve_tool_and_shell(
     coding_tool = resolve_coding_tool(oc, codex, claude, powershell=is_powershell)
     if coding_tool is None:
         coding_tool = prompt_coding_tool_choice(powershell=is_powershell)
+    ensure_agent_hint(coding_tool)
     return coding_tool
 
 
@@ -430,19 +439,23 @@ def _resolve_resume_tool(
     }
 
     if claude:
-        return "claude", tool_commands["claude"]
-    if codex:
-        return "codex", tool_commands["codex"]
-    if oc:
-        return "opencode", tool_commands["opencode"]
-    if ticket_tool in tool_commands:
-        return ticket_tool, tool_commands[ticket_tool]
+        resolved: tuple[Optional[str], str] = ("claude", tool_commands["claude"])
+    elif codex:
+        resolved = ("codex", tool_commands["codex"])
+    elif oc:
+        resolved = ("opencode", tool_commands["opencode"])
+    elif ticket_tool in tool_commands:
+        resolved = (ticket_tool, tool_commands[ticket_tool])
+    else:
+        command = prompt_coding_tool_choice(powershell=powershell)
+        resolved = (None, command)
+        for name, tool_command in tool_commands.items():
+            if tool_command == command:
+                resolved = (name, command)
+                break
 
-    command = prompt_coding_tool_choice(powershell=powershell)
-    for name, tool_command in tool_commands.items():
-        if tool_command == command:
-            return name, command
-    return None, command
+    ensure_agent_hint(resolved[1])
+    return resolved
 
 
 def _build_resume_command(
@@ -1235,12 +1248,16 @@ def main(
             raise typer.Exit(1)
 
         repo_info = get_repo_info()
-        if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
-            raise typer.Exit(1)
 
+        # Resolve the coding tool before touching git — see the SSH path below.
         coding_tool = resolve_coding_tool(oc, codex, claude)
         if coding_tool is None:
             coding_tool = prompt_coding_tool_choice()
+        ensure_agent_hint(coding_tool)
+
+        if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
+            raise typer.Exit(1)
+
         worktree_path = worktree_path_for_branch(
             repo_info.name, branch, LOCAL_WORKTREE_BASE
         )
@@ -1305,12 +1322,16 @@ def main(
     # Worktree-aware branching: if in a worktree and no --from specified,
     # the new branch will be created from the current HEAD (worktree's HEAD)
     # This is the default git behavior when no base is specified
+    # Resolve the coding tool before touching git: under herdr this re-execs
+    # vibe with the agent hint set, and a re-exec after worktree creation would
+    # repeat that work.
+    remote_shell = _resolve_remote_shell()
+    coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
+
     if not setup_worktree(branch, from_branch, repo_info.name, repo_info.root):
         raise typer.Exit(1)
 
     target = _target()
-    remote_shell = _resolve_remote_shell()
-    coding_tool = _resolve_tool_and_shell(oc, codex, claude, remote_shell)
     exit_code = connect_to_remote(
         repo_name=repo_info.name,
         worktree_name=branch_to_worktree_dirname(branch),

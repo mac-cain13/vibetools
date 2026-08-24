@@ -1,6 +1,6 @@
 ---
 name: park
-description: Parks the current work onto the NSProject board so it can be resumed with `vibe resume <id>`. Use when the user says "park", "park this", "wrap this up for now", "wrap up for now", "set this aside", or otherwise asks to stop work on something for now but keep it resumable. Writes the park commit, captures a "Where I left off" handoff, and records a parked work entry on the ticket.
+description: Parks the current work onto the NSProject board so it can be resumed with `vibe resume TICKET_ID`. Use when the user says "park", "park this", "wrap this up for now", "wrap up for now", "set this aside", or otherwise asks to stop work on something for now but keep it resumable. Writes the park commit, captures a "Where I left off" handoff, and records a parked work entry on the ticket.
 ---
 
 # Park — the suspend interface for the NSProject board
@@ -272,8 +272,8 @@ removes it after the session exits). Steps, in order:
      their words). This section is the cross-person source of truth.
    - **Append a dated `## Log` entry** (newest at the bottom).
    - **Find-or-insert this person's `work[]` entry** (keyed by `$BRANCH`): `repo`
-     = the canonical URL, `branch`, `by`, `session` (step 6), `base_branch`,
-     `tool: claude`, `parked_at` = now (`date -u +%Y-%m-%dT%H:%M:%SZ`). Refresh
+     = the canonical URL, `branch`, `by`, `session` and `tool` (resolved below),
+     `base_branch`, `parked_at` = now (`date -u +%Y-%m-%dT%H:%M:%SZ`). Refresh
      `parked_at` on a re-park.
    - **Stamp the top-level `updated:`** to today (`date -u +%Y-%m-%d`).
    - **Commit + push the board:** `git -C "$DATA" add "$FILE" && git -C "$DATA"
@@ -282,11 +282,22 @@ removes it after the session exits). Steps, in order:
      pushed later) — never lose the handoff. Leave the infra root's submodule
      pointer dirty.
 
-## Session-id capture (best-effort)
+## Tool and session-id capture (best-effort)
 
-Claude Code writes this conversation to a `.jsonl` under
-`~/.claude/projects/<project-dir>/`, where `<project-dir>` is the session's cwd
-with every non-alphanumeric character replaced by `-`:
+Codex exposes the resumable session UUID directly. Prefer it when present and
+valid:
+
+```bash
+if [ -n "${CODEX_SESSION_ID:-}" ] \
+   && [[ "$CODEX_SESSION_ID" =~ ^[A-Za-z0-9-]+$ ]]; then
+  TOOL=codex
+  SESSION=$CODEX_SESSION_ID
+fi
+```
+
+Otherwise set `TOOL=claude`. Claude Code writes this conversation to a `.jsonl`
+under `~/.claude/projects/<project-dir>/`, where `<project-dir>` is the session's
+cwd with every non-alphanumeric character replaced by `-`:
 
 ```bash
 PROJ=~/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')
@@ -298,7 +309,8 @@ grep it for a distinctive phrase from a recent user message in this session. If
 it matches, write its basename without `.jsonl` to the `work[]` entry's
 `session`. If the check fails or the directory does not exist, **leave `session`
 unset** — it is best-effort, and resume degrades gracefully (a fresh session
-seeded from `## Where I left off`).
+seeded from `## Where I left off`). Always write the resolved `TOOL` to the
+entry's `tool` field.
 
 ---
 

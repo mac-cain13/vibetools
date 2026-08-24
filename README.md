@@ -28,6 +28,14 @@ The install script uses [uv](https://docs.astral.sh/uv/) for fast, reliable inst
 This will:
 1. Install `uv` if not present
 2. Install `vibe` as a global tool
+3. Link this repository's skills into Claude Code and share the complete user
+   skill directory with Codex
+
+Claude Code remains the canonical user-skill location at `~/.claude/skills`.
+Codex's documented user-skill location, `~/.agents/skills`, is linked to it so
+skills added for either agent stay available to both. If the Codex directory
+already contains entries that are not mirrored in Claude Code, the installer
+preserves it and stops with instructions instead of overwriting those skills.
 
 ### Manual installation
 

@@ -3,10 +3,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-echo "Installing vibe..."
-echo ""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Function to check if a command exists
 command_exists() {
@@ -28,6 +25,110 @@ install_uv() {
     # Add to PATH for current session
     export PATH="$HOME/.local/bin:$PATH"
 }
+
+# Install repository skills for Claude Code.
+install_claude_skills() {
+    local skills_src="$1"
+    local claude_skills="$2"
+    local skill_dir skill_name link
+
+    if [ ! -d "$skills_src" ]; then
+        echo "  ⚠ no skills/ directory found, skipping"
+        return
+    fi
+
+    mkdir -p "$claude_skills"
+    for skill_dir in "$skills_src"/*/; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        link="$claude_skills/$skill_name"
+
+        # Symlink so the installed skill always tracks the repo source.
+        rm -rf "$link"
+        ln -s "${skill_dir%/}" "$link"
+        echo "  ✓ linked skill '$skill_name' for Claude Code"
+    done
+}
+
+# Return whether every existing Codex skill has the same Claude Code entry.
+codex_directory_matches_claude() {
+    local codex_skills="$1"
+    local claude_skills="$2"
+    local entry counterpart
+
+    while IFS= read -r entry; do
+        counterpart="$claude_skills/$(basename "$entry")"
+        if [ ! -e "$counterpart" ] || [ ! "$entry" -ef "$counterpart" ]; then
+            return 1
+        fi
+    done < <(find "$codex_skills" -mindepth 1 -maxdepth 1 -print)
+}
+
+# Share the complete Claude Code skill directory with Codex.
+share_skills_with_codex() {
+    local user_root="$1"
+    local claude_skills="$user_root/.claude/skills"
+    local agents_root="$user_root/.agents"
+    local codex_skills="$agents_root/skills"
+    local shared_target="../.claude/skills"
+    local timestamp backup suffix
+
+    mkdir -p "$agents_root"
+
+    if [ -L "$codex_skills" ]; then
+        if [ "$codex_skills" -ef "$claude_skills" ]; then
+            echo "  ✓ Codex already shares Claude Code skills"
+            return
+        fi
+
+        echo "  ✗ $codex_skills points somewhere other than $claude_skills" >&2
+        echo "    Preserving it; move it aside and rerun the installer." >&2
+        return 1
+    fi
+
+    if [ -e "$codex_skills" ]; then
+        if [ ! -d "$codex_skills" ] || ! codex_directory_matches_claude "$codex_skills" "$claude_skills"; then
+            echo "  ✗ $codex_skills contains skills not mirrored in $claude_skills" >&2
+            echo "    Preserving it; reconcile those skills and rerun the installer." >&2
+            return 1
+        fi
+
+        timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+        backup="$codex_skills.before-shared-$timestamp"
+        suffix=1
+        while [ -e "$backup" ] || [ -L "$backup" ]; do
+            backup="$codex_skills.before-shared-$timestamp-$suffix"
+            suffix=$((suffix + 1))
+        done
+        mv "$codex_skills" "$backup"
+        echo "  ✓ preserved previous Codex skill links at $backup"
+    fi
+
+    ln -s "$shared_target" "$codex_skills"
+    echo "  ✓ shared Claude Code skills with Codex"
+}
+
+# Install and share agent skills from the requested source directory.
+install_agent_skills() {
+    local skills_src="${1:-$SCRIPT_DIR/skills}"
+    local user_root="${VIBE_AGENT_HOME:-$HOME}"
+    local claude_skills="$user_root/.claude/skills"
+
+    if [ -d "$skills_src" ]; then
+        skills_src="$(cd "$skills_src" && pwd)"
+    fi
+
+    install_claude_skills "$skills_src" "$claude_skills"
+    share_skills_with_codex "$user_root"
+}
+
+# Keep the functions available to focused tests without running the full install.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
+
+echo "Installing vibe..."
+echo ""
 
 # Step 1: Check/install uv
 echo "Step 1: Checking for uv..."
@@ -67,25 +168,9 @@ else
 fi
 echo ""
 
-# Step 3: Deploy Claude Code skills
-echo "Step 3: Deploying Claude Code skills..."
-SKILLS_SRC="$SCRIPT_DIR/skills"
-SKILLS_DST="$HOME/.claude/skills"
-if [ -d "$SKILLS_SRC" ]; then
-    mkdir -p "$SKILLS_DST"
-    for skill_dir in "$SKILLS_SRC"/*/; do
-        [ -d "$skill_dir" ] || continue
-        skill_name=$(basename "$skill_dir")
-        link="$SKILLS_DST/$skill_name"
-        # Symlink so the installed skill always tracks the repo source
-        # (a copy would silently go stale on the next skill change).
-        rm -rf "$link"
-        ln -s "${skill_dir%/}" "$link"
-        echo "  ✓ linked skill '$skill_name'"
-    done
-else
-    echo "  ⚠ no skills/ directory found, skipping"
-fi
+# Step 3: Deploy shared Claude Code and Codex skills
+echo "Step 3: Deploying shared agent skills..."
+install_agent_skills "$SCRIPT_DIR/skills"
 echo ""
 
 # Step 4: Verify installation

@@ -65,16 +65,16 @@ _Pristine VM ready._
 - Install Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - Install with brew: `brew install jump zsh-autosuggestions aria2 xcodesorg/made/xcodes ripgrep jq fd fzf bat tree yq htmlq gh git-delta hyperfine watch tldr pandoc xcbeautify imagemagick ffmpeg chargepoint/xcparse/xcparse`
 - Install Peekaboo (macOS screen capture + GUI automation, used by the coding agents): `brew install steipete/tap/peekaboo`
-  - The `peekaboo` skill ships in this repo under `skills/peekaboo/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
+  - The `peekaboo` skill ships in this repo under `skills/peekaboo/` and is shared with Claude Code and Codex automatically by `./install.sh` (see the agent-skills setup below).
   - Peekaboo needs **Screen Recording** and **Accessibility** permissions. Because the coding agent runs it over SSH, these must be granted to the SSH host process, not to peekaboo itself: in Settings > Privacy & Security, grant both **Screen Recording** and **Accessibility** to `sshd-keygen-wrapper` (`/usr/libexec/sshd-keygen-wrapper`). Add it via the `+` button (⌘⇧G → paste the path) if it isn't already listed, or answer the prompt that appears the first time peekaboo runs over SSH.
   - Verify with `peekaboo permissions status --json` (over SSH) — both should report authorized.
 - Install the Sentry CLI (first-party tool for investigating production errors, crashes, and user-reported issues): `brew install getsentry/tools/sentry`
   - Authenticate with `sentry auth login`; check with `sentry auth status`.
-  - The `sentry` skill ships in this repo under `skills/sentry/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
+  - The `sentry` skill ships in this repo under `skills/sentry/` and is shared with Claude Code and Codex automatically by `./install.sh`.
 - Install the Linear CLI (manage Linear issues/projects/cycles from the terminal): `brew install schpet/tap/linear`
   - Note: `linear` collides with the Linear.app cask, so the tap-qualified `schpet/tap/linear` is required — a bare `brew install linear` would install the desktop app instead.
   - Authenticate with `linear auth login`; check with `linear auth whoami`.
-  - The `linear-cli` skill ships in this repo under `skills/linear-cli/` and is symlinked automatically by `./install.sh` (see the Claude Code section below).
+  - The `linear-cli` skill ships in this repo under `skills/linear-cli/` and is shared with Claude Code and Codex automatically by `./install.sh`.
 - Add PermissionAutoResponder.app to Applications, then;
   - add it as a login item: Settings > General > Login items > + Select the app
   - Give accessibility permissions!
@@ -125,8 +125,10 @@ BROKEN: - Login to Xcode with `vibecoding@nonstrict.com` // TODO: Fix 2FA
   - This ensures paths match between host (`/Volumes/External/Repositories/...`) and VM
 - Add the share to Settings > General > Login items > + Select the mounted Repositories folder
 - Symlink the user CLAUDE.md so it stays in sync with the repo: `mkdir -p ~/.claude && ln -sf /Volumes/External/Repositories/vibetools/vm-setup/Claude.md ~/.claude/CLAUDE.md`
-- Install the park skill by symlinking it so it stays in sync with the repo (also works to update an existing install): `mkdir -p ~/.claude/skills && rm -rf ~/.claude/skills/park && ln -sf /Volumes/External/Repositories/vibetools/skills/park ~/.claude/skills/park`
-  - Note: `./install.sh` already symlinks every skill in `skills/`, so this manual step is only needed if you haven't run it.
+- Install `vibe` and the shared Claude Code/Codex skills: `cd /Volumes/External/Repositories/vibetools && ./install.sh`
+  - Repository skills are linked into `~/.claude/skills`; `~/.agents/skills` points at that complete directory so personal skills from other repositories are shared too.
+  - On an existing VM, a Codex skills directory whose entries already match Claude Code is moved to a timestamped backup before the shared link is created. A directory with unmatched Codex-only skills is preserved and the installer stops so it can be reconciled manually.
+  - Verify with `readlink ~/.agents/skills` and `find -L ~/.agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`.
 
 - Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.
 - Run UITests once over SSH, this will trigger a permission prompt for XCTests to allow it to run.

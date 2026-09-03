@@ -23,6 +23,76 @@ def _hermetic_target(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("vibe.target.DEFAULT_VM", None, raising=False)
 
 
+def build_shared_drive(root: Path) -> tuple[Path, Path]:
+    """Lay out a repo and worktree base the way the shared drive is arranged.
+
+    Renaming ``root`` afterwards stands in for a different mount path.
+
+    Args:
+        root: Directory standing in for the drive's mount point
+
+    Returns:
+        Tuple of (repo path, worktree base path)
+    """
+    repo = root / "test-repo"
+    worktree_base = root / "_vibecoding"
+    repo.mkdir(parents=True)
+    worktree_base.mkdir(parents=True)
+
+    for command in (
+        ["git", "init"],
+        ["git", "config", "user.email", "test@test.com"],
+        ["git", "config", "user.name", "Test User"],
+        ["git", "commit", "--allow-empty", "-m", "Initial commit"],
+    ):
+        subprocess.run(command, cwd=repo, capture_output=True, check=True)
+
+    return repo, worktree_base
+
+
+def add_legacy_worktree(repo: Path, worktree_base: Path, branch: str) -> Path:
+    """Add a worktree the way git recorded them before relative paths.
+
+    Absolute bookkeeping is forced so the test does not depend on the
+    machine's own worktree.useRelativePaths setting.
+
+    Args:
+        repo: Path to the main checkout
+        worktree_base: Base directory for worktrees
+        branch: Branch name to create
+
+    Returns:
+        Path to the created worktree
+    """
+    worktree_path = worktree_base / repo.name / branch
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "worktree.useRelativePaths=false",
+            "worktree",
+            "add",
+            "-b",
+            branch,
+            str(worktree_path),
+        ],
+        cwd=repo,
+        capture_output=True,
+        check=True,
+    )
+    return worktree_path
+
+
+def git_succeeds(worktree_path: Path) -> bool:
+    """Check whether git can operate inside a worktree directory."""
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True,
+        cwd=worktree_path,
+    )
+    return result.returncode == 0
+
+
 @pytest.fixture
 def temp_git_repo(tmp_path: Path) -> Path:
     """Create a temporary git repository for testing.

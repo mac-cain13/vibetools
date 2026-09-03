@@ -123,12 +123,15 @@ BROKEN: - Login to Xcode with `vibecoding@nonstrict.com` // TODO: Fix 2FA
   - `sudo mkdir -p /Volumes/External`
   - `sudo ln -s /Volumes/Repositories /Volumes/External/Repositories`
   - This ensures paths match between host (`/Volumes/External/Repositories/...`) and VM
+  - Only skin deep: git resolves the symlink, so paths it records here name `/Volumes/Repositories/...`, which the host does not have
 - Add the share to Settings > General > Login items > + Select the mounted Repositories folder
 - Symlink the user CLAUDE.md so it stays in sync with the repo: `mkdir -p ~/.claude && ln -sf /Volumes/External/Repositories/vibetools/vm-setup/Claude.md ~/.claude/CLAUDE.md`
+  - Point Codex at the same file so both agents read one set of rules: `mkdir -p ~/.codex && ln -sf ~/.claude/CLAUDE.md ~/.codex/AGENTS.md`
 - Install `vibe` and the shared Claude Code/Codex skills: `cd /Volumes/External/Repositories/vibetools && ./install.sh`
   - Repository skills are linked into `~/.claude/skills`; `~/.agents/skills` points at that complete directory so personal skills from other repositories are shared too.
   - On an existing VM, a Codex skills directory whose entries already match Claude Code is moved to a timestamped backup before the shared link is created. A directory with unmatched Codex-only skills is preserved and the installer stops so it can be reconciled manually.
   - Verify with `readlink ~/.agents/skills` and `find -L ~/.agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`.
+  - Also sets `git config --global worktree.useRelativePaths true`, without which a worktree created here is unusable on the host.
 
 - Run some UITests from Xcode once so it will ask you for permission to modify other apps, access to external folders etc.
 - Run UITests once over SSH, this will trigger a permission prompt for XCTests to allow it to run.

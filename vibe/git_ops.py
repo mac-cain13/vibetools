@@ -13,6 +13,10 @@ from vibe.utils import console
 # Default timeout for git operations (seconds)
 GIT_TIMEOUT = 60
 
+# The drive is mounted at a different path on host and VM, so absolute worktree
+# bookkeeping is a dead path on the other machine. '-c' so git < 2.48 ignores it.
+RELATIVE_WORKTREE_OPTS = ["-c", "worktree.useRelativePaths=true"]
+
 
 class WorktreeStatus(Enum):
     """Status of a worktree check."""
@@ -379,6 +383,33 @@ def find_branch_checkout(branch: str, cwd: Path | None = None) -> Path | None:
     return None
 
 
+def repair_worktree(worktree_path: Path, cwd: Path | None = None) -> bool:
+    """Re-point a worktree's bookkeeping at its current on-disk location.
+
+    Recovers a worktree recorded under the other machine's mount path, which
+    git reports as "fatal: not a git repository" here.
+
+    Args:
+        worktree_path: Path to the worktree directory, as reachable here
+        cwd: Working directory for git commands (the main checkout)
+
+    Returns:
+        True if git reported a successful repair
+    """
+    result = subprocess.run(
+        [
+            "git",
+            *RELATIVE_WORKTREE_OPTS,
+            "worktree",
+            "repair",
+            str(worktree_path),
+        ],
+        capture_output=True,
+        cwd=cwd,
+    )
+    return result.returncode == 0
+
+
 def prune_worktrees(cwd: Path | None = None) -> None:
     """Prune stale worktree administrative entries.
 
@@ -500,6 +531,7 @@ def create_worktree(
         result = subprocess.run(
             [
                 "git",
+                *RELATIVE_WORKTREE_OPTS,
                 "worktree",
                 "add",
                 "-b",
@@ -534,7 +566,14 @@ def create_worktree(
             )
         # Branch exists, create worktree from existing branch
         result = subprocess.run(
-            ["git", "worktree", "add", str(worktree_path), worktree_name],
+            [
+                "git",
+                *RELATIVE_WORKTREE_OPTS,
+                "worktree",
+                "add",
+                str(worktree_path),
+                worktree_name,
+            ],
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -568,6 +607,7 @@ def create_worktree(
         result = subprocess.run(
             [
                 "git",
+                *RELATIVE_WORKTREE_OPTS,
                 "worktree",
                 "add",
                 "-b",
@@ -582,7 +622,15 @@ def create_worktree(
     else:
         # Create new branch from HEAD
         result = subprocess.run(
-            ["git", "worktree", "add", "-b", worktree_name, str(worktree_path)],
+            [
+                "git",
+                *RELATIVE_WORKTREE_OPTS,
+                "worktree",
+                "add",
+                "-b",
+                worktree_name,
+                str(worktree_path),
+            ],
             capture_output=True,
             text=True,
             cwd=cwd,

@@ -122,6 +122,25 @@ install_agent_skills() {
     share_skills_with_codex "$user_root"
 }
 
+# Keep a plain 'git worktree add' usable from both machines: the drive is
+# mounted at a different path on each, so absolute bookkeeping dies on the other.
+configure_relative_worktrees() {
+    local current
+
+    current=$(git config --global --get worktree.useRelativePaths 2>/dev/null || true)
+    if [ "$current" = "true" ]; then
+        echo "  ✓ git already records worktrees with relative paths"
+        return
+    fi
+
+    if git config --global worktree.useRelativePaths true; then
+        echo "  ✓ git will record worktrees with relative paths"
+    else
+        echo "  ⚠ could not set worktree.useRelativePaths"
+        echo "    worktrees created outside vibe may not work on the other machine"
+    fi
+}
+
 # Keep the functions available to focused tests without running the full install.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then
     return 0
@@ -173,8 +192,13 @@ echo "Step 3: Deploying shared agent skills..."
 install_agent_skills "$SCRIPT_DIR/skills"
 echo ""
 
-# Step 4: Verify installation
-echo "Step 4: Verifying installation..."
+# Step 4: Make worktrees portable between host and VM
+echo "Step 4: Configuring git for cross-machine worktrees..."
+configure_relative_worktrees
+echo ""
+
+# Step 5: Verify installation
+echo "Step 5: Verifying installation..."
 if command_exists vibe; then
     echo "  ✓ 'vibe' command is available"
     VIBE_PATH=$(which vibe)

@@ -362,6 +362,7 @@ OPEN_CODE_CMD = "opencode"   # OpenCode command (--oc)
 - **Flexible base branches** - Create new branches from any local or remote branch
 - **Batch cleanup** - Remove multiple completed worktrees at once
 - **Lingering directory cleanup** - Removes invalid directories in worktree base
+- **Portable worktrees** - Recorded with relative paths, so a worktree works from both the host and the VM whatever each has the drive mounted at
 - **Rich terminal output** - Colored status messages and progress indicators
 - **SSH error handling** - Helpful messages for connection failures
 - **macOS keychain integration** - Automatic keychain unlock on remote connection

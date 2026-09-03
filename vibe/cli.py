@@ -56,6 +56,7 @@ from vibe.git_ops import (
     has_uncommitted_changes,
     is_git_worktree,
     prune_worktrees,
+    repair_worktree,
     switch_checkout_to_branch,
     unwind_park_commit,
     validate_git_repo,
@@ -256,6 +257,46 @@ def resolve_coding_tool(
     return None  # No flag = interactive prompt
 
 
+def _repair_foreign_worktree(
+    worktree_path: Path,
+    worktree_name: str,
+    repo_name: str,
+    cwd: Path,
+) -> WorktreeStatus:
+    """Try to adopt a worktree recorded under a different mount path.
+
+    Only directories carrying a worktree .git file are touched; anything else
+    is left for the caller to report as invalid.
+
+    Args:
+        worktree_path: Path to the existing directory
+        worktree_name: Branch name for the worktree
+        repo_name: Name of the repository
+        cwd: Working directory for git commands
+
+    Returns:
+        The worktree status after the attempt (unchanged when no repair ran)
+    """
+    if not (worktree_path / ".git").is_file():
+        return WorktreeStatus.EXISTS_INVALID
+
+    if not repair_worktree(worktree_path, cwd=cwd):
+        return WorktreeStatus.EXISTS_INVALID
+
+    status = check_worktree_exists(
+        worktree_name=worktree_name,
+        repo_name=repo_name,
+        worktree_base=LOCAL_WORKTREE_BASE,
+        cwd=cwd,
+    )
+    if status == WorktreeStatus.EXISTS_VALID:
+        console.print(
+            f"Repaired worktree bookkeeping at: {worktree_path} "
+            f"(it was recorded under another machine's path)"
+        )
+    return status
+
+
 def setup_worktree(
     worktree_name: str,
     from_branch: Optional[str],
@@ -283,6 +324,11 @@ def setup_worktree(
         worktree_base=LOCAL_WORKTREE_BASE,
         cwd=cwd,
     )
+
+    if status == WorktreeStatus.EXISTS_INVALID:
+        status = _repair_foreign_worktree(
+            worktree_path, worktree_name, repo_name, cwd
+        )
 
     if status == WorktreeStatus.EXISTS_INVALID:
         console.print(

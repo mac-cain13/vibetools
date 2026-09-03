@@ -284,6 +284,33 @@ class TestSetupWorktree:
 
         assert result is False
 
+    @patch("vibe.cli.console")
+    def test_adopts_worktree_recorded_at_another_mount_point(
+        self,
+        mock_console: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Should repair a worktree created under the other machine's path."""
+        from tests.conftest import add_legacy_worktree, build_shared_drive, git_succeeds
+        from vibe.cli import setup_worktree
+
+        repo, worktree_base = build_shared_drive(tmp_path / "mount-a")
+        add_legacy_worktree(repo, worktree_base, "legacy")
+        (tmp_path / "mount-a").rename(tmp_path / "mount-b")
+        moved_repo = tmp_path / "mount-b" / "test-repo"
+        moved_base = tmp_path / "mount-b" / "_vibecoding"
+
+        with patch("vibe.cli.LOCAL_WORKTREE_BASE", moved_base):
+            result = setup_worktree(
+                worktree_name="legacy",
+                from_branch=None,
+                repo_name="test-repo",
+                cwd=moved_repo,
+            )
+
+        assert result is True
+        assert git_succeeds(moved_base / "test-repo" / "legacy") is True
+
     @patch("vibe.cli.check_worktree_exists")
     @patch("vibe.cli.console")
     def test_reuses_existing_valid_worktree(

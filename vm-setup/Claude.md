@@ -6,13 +6,18 @@ You're running in a Virtual Machine, we're working on the same files through a s
 
 Don't create a new branch unless explicitly asked by the user. The default is that we want to commit on the branch we're working on, even if this is the main branchy.
 
+# Worktrees
+
+Put worktrees where the `vibe` tool expects them or I can't open them from my machine: `<repo-base>/_vibecoding/<repo-name>/<branch>` — from a main checkout that's `git worktree add ../_vibecoding/<repo-name>/<branch> -b <branch>`. The directory name is the branch name with any `/` written as `%2F`. Which `/Volumes/...` prefix you use doesn't matter.
+
 # Swift Code Style
 
 - **No `@unchecked Sendable`** - Never use `@unchecked Sendable` without explicit approval. Always implement proper `Sendable` conformance. Only as a last resort, with explicit user approval, is `@unchecked Sendable` allowed.
 - **File headers** - Every Swift file should have a header comment aligning with other files in the project
 - **Error logging** - Always log errors as `(error as NSError).debugDescription` for complete error information
 - **Protocols only when needed** - Only create protocols when multiple implementations exist or for testing
-- **SwiftDoc comments** - Write and maintain short and pragmatic documentation comments for all public and internal functions
+- **SwiftDoc comments** - ONLY functions explicitly declared `public` get a SwiftDoc comment (short and pragmatic). No doc comments on internal/private functions, properties, or types.
+- **No other code comments** - Do not add inline or explanatory comments, EXCEPT when there is a very unusual pattern/exception/pitfall future readers MUST know about — and EVEN THEN the comment must be a short one-liner. This rule wins over matching the comment density of existing files in the project.
 
 # Delivering builds for testing
 

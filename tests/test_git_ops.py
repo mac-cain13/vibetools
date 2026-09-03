@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import add_legacy_worktree, build_shared_drive, git_succeeds
 from vibe.git_ops import (
     ContextType,
     CurrentContext,
@@ -24,6 +25,7 @@ from vibe.git_ops import (
     has_uncommitted_changes,
     is_git_worktree,
     is_inside_worktree_base,
+    repair_worktree,
     validate_git_repo,
     worktree_dirname_to_branch,
     worktree_path_for_branch,
@@ -673,6 +675,73 @@ class TestCreateWorktree:
 
         assert (temp_worktree_base / "test-repo").exists()
         assert worktree_path.exists()
+
+
+class TestPortableWorktreeBookkeeping:
+    """Worktrees must survive the drive's differing mount points.
+
+    Renaming the stand-in mount directory reproduces what the host and a VM
+    disagree about.
+    """
+
+    def test_create_worktree_records_relative_paths(
+        self, temp_git_repo: Path, temp_worktree_base: Path
+    ) -> None:
+        """Both sides of a worktree's bookkeeping should stay relative."""
+        worktree_path = create_worktree(
+            worktree_name="portable",
+            repo_name="test-repo",
+            worktree_base=temp_worktree_base,
+            cwd=temp_git_repo,
+        )
+
+        gitfile = (worktree_path / ".git").read_text()
+        recorded = gitfile.split(":", 1)[1].strip()
+        gitdir = (
+            temp_git_repo / ".git" / "worktrees" / "portable" / "gitdir"
+        ).read_text()
+
+        assert not Path(recorded).is_absolute()
+        assert not Path(gitdir.strip()).is_absolute()
+
+    def test_worktree_survives_a_changed_mount_point(self, tmp_path: Path) -> None:
+        """A vibe-created worktree should work under a different prefix."""
+        repo, worktree_base = build_shared_drive(tmp_path / "mount-a")
+        create_worktree(
+            worktree_name="portable",
+            repo_name="test-repo",
+            worktree_base=worktree_base,
+            cwd=repo,
+        )
+
+        (tmp_path / "mount-a").rename(tmp_path / "mount-b")
+        moved = tmp_path / "mount-b" / "_vibecoding" / "test-repo" / "portable"
+
+        assert git_succeeds(moved) is True
+
+    def test_repair_adopts_a_worktree_from_another_mount_point(
+        self, tmp_path: Path
+    ) -> None:
+        """Repair should recover a worktree recorded with absolute paths."""
+        repo, worktree_base = build_shared_drive(tmp_path / "mount-a")
+        legacy = add_legacy_worktree(repo, worktree_base, "legacy")
+
+        (tmp_path / "mount-a").rename(tmp_path / "mount-b")
+        moved_repo = tmp_path / "mount-b" / "test-repo"
+        moved = tmp_path / "mount-b" / "_vibecoding" / "test-repo" / "legacy"
+        assert git_succeeds(moved) is False
+
+        assert repair_worktree(moved, cwd=moved_repo) is True
+        assert git_succeeds(moved) is True
+
+    def test_repair_reports_failure_for_a_plain_directory(
+        self, temp_git_repo: Path, tmp_path: Path
+    ) -> None:
+        """A directory that was never a worktree cannot be repaired."""
+        plain = tmp_path / "not-a-worktree"
+        plain.mkdir()
+
+        assert repair_worktree(plain, cwd=temp_git_repo) is False
 
 
 class TestIsInsideWorktreeBase:

@@ -2,6 +2,15 @@
 
 You're running in a Virtual Machine, we're working on the same files through a shared drive. I'm working on the host, so if I say something doesn't build on my machine, I'm talking about my host machine which might be slightly different from your machine. Also if you want to show something to me make sure to serve it on the local network so I can access it or if you present a file path use the /Volumes/External/ prefix path because that is the same on my machine.
 
+The VM cannot push to nor pull from GitHub (the vibecoding account only has read/comment access). Commit locally, pushing/pulling will be handled by the user.
+
+# How I like work delivered
+
+- Commit and update tickets once per verified outcome, not after every attempt.
+- Measure before choosing the scope of a fix; keep churn low and say what you left out and why.
+- Delete what a change makes obsolete in the same commit; one commit per reason to change, with a concise pointy message.
+- Describe bugs by their symptom ("the paywall card shrinks when expanding options"), never by a bare ticket number.
+
 # Branching
 
 Don't create a new branch unless explicitly asked by the user. The default is that we want to commit on the branch we're working on, even if this is the main branchy.
